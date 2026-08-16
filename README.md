@@ -56,7 +56,6 @@ Optional Writing helpers stay off until you enable them in KEYS. See [docs/api-k
 - Tauri 2 + React desktop host. Closing the app kills the Python sidecar and GPU worker tree.
 - Sidecar on `127.0.0.1:7784`: queue, cancel, library, Studio bounce, Video Studio.
 - INT8 Music 3 on a single RTX 3090. **Low-memory decode is off by default** (full decode). Turn it on only if VRAM is tight.
-- No ComfyUI process or remote music API.
 - Native Studio: clip timeline, This Lane / All lanes, fades, library drops, titled WAV export.
 
 ## Setup
