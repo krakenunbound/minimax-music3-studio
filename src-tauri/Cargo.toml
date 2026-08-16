@@ -1,6 +1,6 @@
 [package]
 name = "minimax-music3-studio"
-version = "0.2.1"
+version = "0.2.2"
 description = "A native MiniMax Music 3 production studio"
 authors = ["The Kraken"]
 edition = "2021"

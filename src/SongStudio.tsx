@@ -470,7 +470,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
   const undo = () => setHistory((items) => { const prior = items.at(-1); if (!prior) return items; setFuture((next) => [structuredClone(settingsRef.current), ...next].slice(0, 50)); setSettings(prior); return items.slice(0, -1); });
   const redo = () => setFuture((items) => { const next = items[0]; if (!next) return items; setHistory((prior) => [...prior.slice(-49), structuredClone(settingsRef.current)]); setSettings(next); return items.slice(1); });
   const editableIds = () => tracks.filter((track) => !track.reference || !hasStems).map((track) => track.id);
-  const movableIds = () => selectionScope === "all" ? tracks.map((track) => track.id) : [selected];
+  const movableIds = (trackId = selected) => selectionScope === "all" ? tracks.map((track) => track.id) : [trackId];
   const targetIds = () => selectionScope === "all" ? editableIds() : editableIds().filter((id) => id === selected);
   const requireRange = () => { if (!selectionRange || selectionRange.end - selectionRange.start < .05) { setMessage("Drag across a waveform to select a time range first."); return null; } return selectionRange; };
   const trimSong = () => {
@@ -606,16 +606,22 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
   const pointerTime = (event: React.PointerEvent<HTMLElement>) => timeFromClientX(event.clientX, event.currentTarget);
 
   const beginMove = (trackId: string, clipId: string, clientX: number) => {
-    const ids = movableIds();
     const snapshots: Record<string, Record<string, number>> = {};
     const effects: Record<string, EffectStamp[]> = {};
-    ids.forEach((id) => {
-      const clips = settingsRef.current[id]?.clips ?? [];
-      snapshots[id] = Object.fromEntries(clips.map((clip) => [clip.id, clip.start]));
-      const moving = selectionScope === "all" ? clips : clips.filter((clip) => clip.id === clipId);
-      effects[id] = (settingsRef.current[id]?.effects ?? []).filter((effect) => moving.some((clip) => effect.end > clip.start && effect.start < clipEnd(clip, sourceOf(id)))).map((effect) => ({ id: effect.id, start: effect.start, end: effect.end }));
-    });
-    if (selectionScope === "lane") snapshots[trackId] = { [clipId]: settingsRef.current[trackId]?.clips?.find((clip) => clip.id === clipId)?.start ?? 0 };
+    const stampEffects = (id: string, moving: StudioClip[]) => (settingsRef.current[id]?.effects ?? [])
+      .filter((effect) => moving.some((clip) => effect.end > clip.start && effect.start < clipEnd(clip, sourceOf(id))))
+      .map((effect) => ({ id: effect.id, start: effect.start, end: effect.end }));
+    if (selectionScope === "all") {
+      tracks.forEach((track) => {
+        const clips = settingsRef.current[track.id]?.clips ?? [];
+        snapshots[track.id] = Object.fromEntries(clips.map((clip) => [clip.id, clip.start]));
+        effects[track.id] = stampEffects(track.id, clips);
+      });
+    } else {
+      const clip = settingsRef.current[trackId]?.clips?.find((item) => item.id === clipId);
+      snapshots[trackId] = { [clipId]: clip?.start ?? 0 };
+      effects[trackId] = clip ? stampEffects(trackId, [clip]) : [];
+    }
     setHistory((items) => [...items.slice(-49), structuredClone(settingsRef.current)]); setFuture([]);
     dragRef.current = { kind: "move", originX: clientX, snapshots, effects };
     setSelected(trackId); setSelectedClipId(clipId);
@@ -655,7 +661,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
       return;
     }
     if (tool === "razor") {
-      razorAt(time, movableIds());
+      razorAt(time, movableIds(track.id));
       seek(time);
       return;
     }
@@ -835,7 +841,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
       <div className="studio-tool-group"><button title="Undo last edit" disabled={!history.length} onClick={undo}>↶ Undo</button><button title="Redo edit" disabled={!future.length} onClick={redo}>↷ Redo</button></div>
       <div className="studio-scope" role="group" aria-label="Editing tool"><button className={tool === "select" ? "active" : ""} title="Arrow · move clips (V)" onClick={() => setTool("select")}>➤ Move</button><button className={tool === "razor" ? "active" : ""} title="Razor · cut clips (C)" onClick={() => setTool("razor")}>✁ Razor</button><button className={tool === "range" ? "active" : ""} title="Range · select time (R)" onClick={() => setTool("range")}>▮ Range</button></div>
       <div className="studio-range-readout"><span>{selectionScope === "all" ? "ALL-LANE RANGE" : "LANE RANGE"}</span><b>{selectionRange ? `${clock(selectionRange.start)} – ${clock(selectionRange.end)}` : fadeTip ?? "Select a clip or drag a range"}</b></div>
-      <div className="studio-scope" role="group" aria-label="Selection scope"><button className={selectionScope === "lane" ? "active" : ""} title="This lane (T). L toggles." onClick={() => setSelectionScope("lane")}>This lane</button><button className={selectionScope === "all" ? "active" : ""} title="All lanes (A). L toggles. Drag any clip to slide every lane together." onClick={() => setSelectionScope("all")}>All lanes</button></div>
+      <div className="studio-scope" role="group" aria-label="Selection scope"><button className={selectionScope === "lane" ? "active" : ""} title="This Lane (T). L toggles." onClick={() => setSelectionScope("lane")}>This Lane</button><button className={selectionScope === "all" ? "active" : ""} title="All lanes (A). L toggles. Drag any clip to slide every lane together." onClick={() => setSelectionScope("all")}>All lanes</button></div>
       <div className="studio-tool-group"><button className={loopSelection ? "active" : ""} disabled={!selectionRange} onClick={() => setLoopSelection((value) => !value)}>↻ Loop</button><button disabled={!selectionRange} onClick={trimSong}>Trim song</button><button disabled={!selectionRange || !targetIds().length} onClick={silenceRange}>Mute range</button><button disabled={!selectionRange || !targetIds().length} onClick={() => fadeSong("in")}>Fade in</button><button disabled={!selectionRange || !targetIds().length} onClick={() => fadeSong("out")}>Fade out</button><button title="Split at the playhead and push later audio to the right" disabled={!targetIds().length} onClick={addSpace}>Insert space</button><button disabled={!selectionRange || saving} onClick={() => void exportSelection()}>Export range</button></div>
       <div className="studio-zoom"><button title="Zoom out" onClick={() => zoomBy(0.85)}>−</button><input aria-label="Timeline zoom" type="range" min="6" max="160" step="1" value={pxPerSec} onChange={(event) => setPxPerSec(Number(event.target.value))} /><button title="Zoom in" onClick={() => zoomBy(1.18)}>+</button></div>
       <button className="add-track-button" disabled={saving} onClick={() => setSourceChooser(true)}>＋ Add track</button><input ref={fileInput} className="studio-file-input" type="file" accept=".wav,.mp3,.flac,.m4a,.aac,.ogg,audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importTrack(file); }}/>
@@ -848,7 +854,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
             <i className="studio-ruler-playhead" style={{ left: LANE_ASIDE + position * pxPerSec }} />
           </div>
           {tracks.map((track) => { const state = settings[track.id]; const isAudible = audible(track); const clips = state?.clips ?? []; return <article key={track.id} className={`studio-lane ${selected === track.id ? "selected" : ""} ${!isAudible ? "inaudible" : ""}`} onClick={() => setSelected(track.id)}>
-            <aside style={{ borderColor: track.color }}><strong>{track.name}</strong>{track.reference ? <small>{hasStems ? "Reference · never doubled with stems" : "Original song mix"}</small> : track.imported ? <small>Imported audio · included in custom mix</small> : <small>Separated from the generated mix</small>}<div className="lane-buttons"><button className={state?.muted ? "active" : ""} disabled={track.reference && hasStems} onClick={(event) => { event.stopPropagation(); change(track.id, { muted: !state?.muted }); }}>M</button><button className={state?.solo ? "active" : ""} disabled={Boolean(track.reference && hasStems)} onClick={(event) => { event.stopPropagation(); change(track.id, { solo: !state?.solo }); }}>S</button></div><div className="studio-scope lane-scope" role="group" aria-label="Selection scope" onClick={(event) => event.stopPropagation()}><button className={selectionScope === "lane" ? "active" : ""} title="This lane (T)" onClick={() => setSelectionScope("lane")}>Lane</button><button className={selectionScope === "all" ? "active" : ""} title="All lanes (A)" onClick={() => setSelectionScope("all")}>All</button></div><label>VOL <input type="range" min="0" max="1" step=".01" value={state?.gain ?? 1} disabled={track.reference && hasStems} onChange={(event) => change(track.id, { gain: Number(event.target.value) })}/><b>{Math.round((state?.gain ?? 1) * 100)}%</b></label></aside>
+            <aside style={{ borderColor: track.color }}><strong>{track.name}</strong>{track.reference ? <small>{hasStems ? "Reference · never doubled with stems" : "Original song mix"}</small> : track.imported ? <small>Imported audio · included in custom mix</small> : <small>Separated from the generated mix</small>}<div className="lane-buttons"><button className={state?.muted ? "active" : ""} disabled={track.reference && hasStems} onClick={(event) => { event.stopPropagation(); change(track.id, { muted: !state?.muted }); }}>M</button><button className={state?.solo ? "active" : ""} disabled={Boolean(track.reference && hasStems)} onClick={(event) => { event.stopPropagation(); change(track.id, { solo: !state?.solo }); }}>S</button></div><div className="studio-scope lane-scope" role="group" aria-label="Selection scope" onClick={(event) => event.stopPropagation()}><button className={selectionScope === "lane" && selected === track.id ? "active" : ""} title="This Lane only (T)" onClick={() => { setSelected(track.id); setSelectionScope("lane"); setMessage(`Edits apply to ${track.name} only.`); }}>This Lane</button><button className={selectionScope === "all" ? "active" : ""} title="All lanes (A)" onClick={() => setSelectionScope("all")}>All</button></div><label>VOL <input type="range" min="0" max="1" step=".01" value={state?.gain ?? 1} disabled={track.reference && hasStems} onChange={(event) => change(track.id, { gain: Number(event.target.value) })}/><b>{Math.round((state?.gain ?? 1) * 100)}%</b></label></aside>
             <div className={`studio-track tool-${tool}`} style={{ width: canvasWidth }} onPointerDown={(event) => onTrackPointerDown(track, event)} onPointerMove={onTrackPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={(event) => { event.preventDefault(); const raw = event.dataTransfer.getData("application/x-minimax-effect"); if (!raw) return; const item = JSON.parse(raw) as SoundEffect; void addLibrarySound(item, timeFromClientX(event.clientX, event.currentTarget)); }}>
               {clips.map((clip) => {
                 const length = Math.max(0.05, clipLength(clip, sourceOf(track.id)));
