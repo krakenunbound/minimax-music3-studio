@@ -49,18 +49,7 @@ More screenshots can drop into `docs/screenshots/`.
 | Cover thumbnails (SD 1.5) | Cloud video (not wired yet; local Video Studio is default) |
 | Sound effects, lyric sync, Studio mix | — |
 
-Keys are stored in `outputs/settings/api-keys.json` (gitignored). Saving a key does not spend it. **Enable** (or the first lyric generate) is the spend switch. See [docs/api-keys.md](docs/api-keys.md).
-
-## Secrets and models — do not push
-
-Already ignored (and not in git history):
-
-- `outputs/` — library, logs, **API vault**
-- `models/` — Music 3, cover, stems, SFX, lyric-align weights
-- `*.safetensors`, `*.gguf`, `*.ckpt`, and other weight extensions
-- `.env`, `*api*key*`, `*API*.txt`
-
-Never commit `outputs/settings/api-keys.json` or a Gemini/xAI key file.
+Optional Writing helpers stay off until you enable them in KEYS. See [docs/api-keys.md](docs/api-keys.md).
 
 ## Current stack
 

@@ -2,23 +2,6 @@
 
 Music 3, stems, local covers, SFX, and Video Studio stay local. Cloud keys are optional helpers for **writing**, later **images**, and later **video**.
 
-## What is stored
-
-Keys live only in:
-
-```text
-outputs/settings/api-keys.json
-```
-
-That folder is gitignored (`outputs/` plus extra `**/api-keys.json` and `*api*key*` rules). Never commit it. GET `/api/settings/ai-keys` returns last-four only, never the secret.
-
-Do not put keys in:
-
-- source files
-- `song.json`
-- logs
-- this repo
-
 ## Enable is not “save”
 
 | State | What happens |
