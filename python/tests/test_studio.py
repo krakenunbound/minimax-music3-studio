@@ -291,6 +291,42 @@ class StudioTest(TestCase):
         self.assertIn("adelay=2500:all=1", graph)
         self.assertIn("atrim=start=10.00000:end=20.00000", graph)
 
+    def test_legacy_session_migrates_offset_trim_and_cuts_into_clips(self) -> None:
+        track = main.StudioTrackState(name="vocals.wav", offset=3, trim_start=3, trim_end=13, fade_in=1, fade_out=2, cuts=[main.StudioRange(start=7, end=8)])
+        clips = main.resolve_studio_clips(track)
+        self.assertEqual(2, len(clips))
+        self.assertEqual(3.0, clips[0].start)
+        self.assertEqual(0.0, clips[0].source_in)
+        self.assertAlmostEqual(4.0, clips[0].source_out)
+        self.assertEqual(8.0, clips[1].start)
+        self.assertAlmostEqual(5.0, clips[1].source_in)
+
+    def test_studio_bounce_places_split_clips_and_does_not_pad_the_workspace(self) -> None:
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as temp:
+            root = Path(temp); song = root / "song-one"; tracks = song / "studio" / "tracks"; tracks.mkdir(parents=True)
+            imported = tracks / "count.wav"; imported.write_bytes(b"wav")
+            (song / "song.json").write_text(json.dumps({"title": "Studio Song", "audio": "song.wav", "studio_imports": [{"file": imported.name, "name": "Count"}]}), encoding="utf-8")
+            (song / "song.wav").write_bytes(b"song")
+            request = main.StudioBounceRequest(tracks=[
+                main.StudioTrackState(name="song.wav", use_clips=True, clips=[main.StudioClip(id="song-a", start=3, source_in=0, source_out=60, fade_in=0.5, fade_out=0)]),
+                main.StudioTrackState(name=imported.name, use_clips=True, clips=[main.StudioClip(id="count-a", start=0, source_in=0, source_out=3)]),
+            ])
+            commands = []
+
+            def fake_run(command, **_kwargs):
+                commands.append(command); Path(command[-1]).write_bytes(b"mix")
+                return type("Result", (), {"returncode": 0, "stderr": ""})()
+
+            with patch.object(main, "LIBRARY_ROOT", root), patch.object(main, "ffmpeg_path", return_value="ffmpeg"), patch.object(main.subprocess, "run", side_effect=fake_run):
+                main.bounce_studio_mix("song-one", request)
+        graph = commands[0][commands[0].index("-filter_complex") + 1]
+        self.assertIn("atrim=start=0.00000:end=60.00000", graph)
+        self.assertIn("adelay=3000:all=1", graph)
+        self.assertIn("afade=t=in:st=0:d=0.50000:curve=qsin", graph)
+        self.assertIn("atrim=start=0.00000:end=3.00000", graph)
+        self.assertNotIn("apad", graph)
+
     def test_custom_mix_can_combine_original_song_with_imported_audio(self) -> None:
         from tempfile import TemporaryDirectory
         with TemporaryDirectory() as temp:

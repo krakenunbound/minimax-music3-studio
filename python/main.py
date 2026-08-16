@@ -166,8 +166,8 @@ class SoundEffectRequest(BaseModel):
 
 
 class StudioRange(BaseModel):
-    start: float = Field(ge=0.0, le=3600.0)
-    end: float = Field(gt=0.0, le=3600.0)
+    start: float = Field(ge=0.0, le=10800.0)
+    end: float = Field(gt=0.0, le=10800.0)
 
 
 class StudioEffectRegion(StudioRange):
@@ -176,18 +176,34 @@ class StudioEffectRegion(StudioRange):
     amount: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class StudioClip(BaseModel):
+    """One movable, razor-cuttable region of a source file on the Studio timeline."""
+
+    id: str = Field(default="", max_length=80)
+    start: float = Field(default=0.0, ge=0.0, le=10800.0)
+    source_in: float = Field(default=0.0, ge=0.0, le=10800.0)
+    source_out: float | None = Field(default=None, gt=0.0, le=10800.0)
+    fade_in: float = Field(default=0.0, ge=0.0, le=120.0)
+    fade_out: float = Field(default=0.0, ge=0.0, le=120.0)
+    gain: float = Field(default=1.0, ge=0.0, le=4.0)
+    gain_left: float = Field(default=1.0, ge=0.0, le=4.0)
+    gain_right: float = Field(default=1.0, ge=0.0, le=4.0)
+
+
 class StudioTrackState(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     gain: float = Field(default=1.0, ge=0.0, le=1.0)
     muted: bool = False
     solo: bool = False
-    offset: float = Field(default=0.0, ge=0.0, le=3600.0)
-    trim_start: float = Field(default=0.0, ge=0.0, le=3600.0)
-    trim_end: float | None = Field(default=None, gt=0.0, le=3600.0)
+    offset: float = Field(default=0.0, ge=0.0, le=10800.0)
+    trim_start: float = Field(default=0.0, ge=0.0, le=10800.0)
+    trim_end: float | None = Field(default=None, gt=0.0, le=10800.0)
     fade_in: float = Field(default=0.0, ge=0.0, le=120.0)
     fade_out: float = Field(default=0.0, ge=0.0, le=120.0)
     cuts: list[StudioRange] = Field(default_factory=list, max_length=64)
     effects: list[StudioEffectRegion] = Field(default_factory=list)
+    clips: list[StudioClip] = Field(default_factory=list, max_length=256)
+    use_clips: bool = False
 
 
 class StudioSessionRequest(BaseModel):
@@ -1081,6 +1097,72 @@ def remove_effect(effect_id: str):
     return {"deleted": True}
 
 
+def resolve_studio_clips(track: StudioTrackState) -> list[StudioClip]:
+    """Return movable timeline clips, migrating the older one-block session when needed."""
+    if track.use_clips:
+        return [clip for clip in track.clips if clip.source_out is None or clip.source_out > clip.source_in]
+    if track.clips:
+        return list(track.clips)
+    offset = max(0.0, track.offset)
+    start = max(offset, track.trim_start)
+    source_in = max(0.0, start - offset)
+    source_out = None if track.trim_end is None else max(source_in + 0.001, track.trim_end - offset)
+    pieces = [StudioClip(id="legacy-0", start=start, source_in=source_in, source_out=source_out, fade_in=track.fade_in, fade_out=track.fade_out)]
+    for cut in track.cuts:
+        split: list[StudioClip] = []
+        for piece in pieces:
+            unknown = piece.source_out is None
+            piece_len = 1e9 if unknown else max(0.0, piece.source_out - piece.source_in)
+            piece_end = piece.start + piece_len
+            if cut.end <= piece.start or cut.start >= piece_end:
+                split.append(piece)
+                continue
+            if cut.start > piece.start + 0.02:
+                left_out = piece.source_in + (cut.start - piece.start)
+                split.append(piece.model_copy(update={"source_out": left_out, "fade_out": 0.0}))
+            if not unknown and cut.end < piece_end - 0.02:
+                right_in = piece.source_in + (cut.end - piece.start)
+                split.append(StudioClip(id=f"{piece.id}-r", start=cut.end, source_in=right_in, source_out=piece.source_out, fade_in=0.0, fade_out=piece.fade_out))
+        pieces = split
+    return pieces
+
+
+def _studio_clip_chain(index: int, track: StudioTrackState, clips: list[StudioClip], filters: list[str]) -> str:
+    """Place each clip on the timeline, then mix overlapping pieces from the same source."""
+    labels: list[str] = []
+    for clip_index, clip in enumerate(clips):
+        parts: list[str] = []
+        if clip.source_in > 0 or clip.source_out is not None:
+            trim = f"atrim=start={clip.source_in:.5f}"
+            if clip.source_out is not None:
+                trim += f":end={clip.source_out:.5f}"
+            parts.append(trim)
+            parts.append("asetpts=PTS-STARTPTS")
+        clip_gain = max(0.0, min(4.0, track.gain * clip.gain))
+        parts.append(f"volume={clip_gain:.5f}")
+        left = max(0.0, min(4.0, clip.gain_left))
+        right = max(0.0, min(4.0, clip.gain_right))
+        if abs(left - 1.0) > 0.001 or abs(right - 1.0) > 0.001:
+            parts.append(f"pan=stereo|c0={left:.5f}*c0|c1={right:.5f}*c1")
+        clip_len = None if clip.source_out is None else max(0.0, clip.source_out - clip.source_in)
+        if clip.fade_in > 0:
+            parts.append(f"afade=t=in:st=0:d={clip.fade_in:.5f}:curve=qsin")
+        if clip.fade_out > 0 and clip_len is not None:
+            parts.append(f"afade=t=out:st={max(0.0, clip_len - clip.fade_out):.5f}:d={clip.fade_out:.5f}:curve=qsin")
+        if clip.start > 0:
+            parts.append(f"adelay={round(clip.start * 1000)}:all=1")
+        label = f"clip{index}_{clip_index}"
+        filters.append(f"[{index}:a]{','.join(parts)}[{label}]")
+        labels.append(label)
+    raw = f"rawlane{index}"
+    if len(labels) == 1:
+        filters.append(f"[{labels[0]}]anull[{raw}]")
+    else:
+        joined = "".join(f"[{label}]" for label in labels)
+        filters.append(f"{joined}amix=inputs={len(labels)}:duration=longest:normalize=0[{raw}]")
+    return raw
+
+
 def _studio_sources(song_dir: Path, metadata: dict, request: StudioBounceRequest) -> list[tuple[Path, StudioTrackState]]:
     available = {str(name): song_dir / "stems" / "htdemucs" / str(name) for name in metadata.get("stems") or []}
     original_mix = song_dir / str(metadata.get("audio") or "song.wav")
@@ -1161,21 +1243,31 @@ def bounce_studio_mix(folder: str, request: StudioBounceRequest):
     for source, _track in sources: command += ["-i", str(source)]
     filters = []
     for index, (_source, track) in enumerate(sources):
-        offset = max(0.0, track.offset)
-        trim_start = max(0.0, track.trim_start - offset)
-        trim_end = max(trim_start, track.trim_end - offset) if track.trim_end is not None else None
-        chain = [f"volume={track.gain:.5f}"]
-        if trim_start > 0: chain.append(f"volume=0:enable='lt(t,{trim_start:.5f})'")
-        if trim_end is not None: chain.append(f"volume=0:enable='gt(t,{trim_end:.5f})'")
-        for cut in track.cuts:
-            start = max(0.0, cut.start - offset); end = max(start, cut.end - offset)
-            chain.append(f"volume=0:enable='between(t,{start:.5f},{end:.5f})'")
-        if track.fade_in > 0: chain.append(f"afade=t=in:st={trim_start:.5f}:d={track.fade_in:.5f}")
-        if track.fade_out > 0 and trim_end is not None:
-            chain.append(f"afade=t=out:st={max(trim_start, trim_end - track.fade_out):.5f}:d={track.fade_out:.5f}")
-        if offset > 0: chain.append(f"adelay={round(offset * 1000)}:all=1")
-        raw_label = f"rawlane{index}"
-        filters.append(f"[{index}:a]{','.join(chain)}[{raw_label}]")
+        clips = resolve_studio_clips(track)
+        if track.use_clips or bool(track.clips):
+            if not clips:
+                filters.append(f"[{index}:a]volume=0,atrim=end=0.05[{f'rawlane{index}'}]")
+                raw_label = f"rawlane{index}"
+                offset = 0.0
+            else:
+                raw_label = _studio_clip_chain(index, track, clips, filters)
+                offset = 0.0
+        else:
+            offset = max(0.0, track.offset)
+            trim_start = max(0.0, track.trim_start - offset)
+            trim_end = max(trim_start, track.trim_end - offset) if track.trim_end is not None else None
+            chain = [f"volume={track.gain:.5f}"]
+            if trim_start > 0: chain.append(f"volume=0:enable='lt(t,{trim_start:.5f})'")
+            if trim_end is not None: chain.append(f"volume=0:enable='gt(t,{trim_end:.5f})'")
+            for cut in track.cuts:
+                start = max(0.0, cut.start - offset); end = max(start, cut.end - offset)
+                chain.append(f"volume=0:enable='between(t,{start:.5f},{end:.5f})'")
+            if track.fade_in > 0: chain.append(f"afade=t=in:st={trim_start:.5f}:d={track.fade_in:.5f}")
+            if track.fade_out > 0 and trim_end is not None:
+                chain.append(f"afade=t=out:st={max(trim_start, trim_end - track.fade_out):.5f}:d={track.fade_out:.5f}")
+            if offset > 0: chain.append(f"adelay={round(offset * 1000)}:all=1")
+            raw_label = f"rawlane{index}"
+            filters.append(f"[{index}:a]{','.join(chain)}[{raw_label}]")
         effected = _studio_effect_filters(filters, raw_label, index, track, offset)
         if effected != f"lane{index}": filters.append(f"[{effected}]anull[lane{index}]")
     inputs = "".join(f"[lane{index}]" for index in range(len(sources)))

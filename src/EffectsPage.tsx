@@ -20,9 +20,9 @@ function songFolder(song: Song) {
   return song.folder_name || song.folder.split(/[\\/]/).filter(Boolean).at(-1) || "";
 }
 
-type Props = { ready: boolean; detail: string; songs: Song[] };
+type Props = { ready: boolean; detail: string; songs: Song[]; onOpenStudio?: (folder: string) => void };
 
-export default function EffectsPage({ ready, detail, songs }: Props) {
+export default function EffectsPage({ ready, detail, songs, onOpenStudio }: Props) {
   const [items, setItems] = useState<SoundEffect[]>([]);
   const [sources, setSources] = useState<Record<string, string>>({});
   const [name, setName] = useState("");
@@ -37,6 +37,7 @@ export default function EffectsPage({ ready, detail, songs }: Props) {
   const [playing, setPlaying] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [addedFolder, setAddedFolder] = useState("");
   const audio = useRef<HTMLAudioElement | null>(null);
 
   const refresh = async () => {
@@ -105,7 +106,8 @@ export default function EffectsPage({ ready, detail, songs }: Props) {
     try {
       await addEffectToStudio(item.id, targetSong);
       const song = songs.find((candidate) => songFolder(candidate) === targetSong);
-      setMessage(`“${item.name}” added as a new Studio track${song ? ` in “${song.title}”` : ""}.`);
+      setAddedFolder(targetSong);
+      setMessage(`“${item.name}” added as a new Studio track${song ? ` in “${song.title}”` : ""}. Open Studio to place the ${item.duration.toFixed(1)}s clip.`);
     } catch (reason: any) { setError(reason?.message ?? String(reason)); }
   }
 
@@ -140,7 +142,7 @@ export default function EffectsPage({ ready, detail, songs }: Props) {
 
       <section className="effects-library">
         <div className="effects-library-head"><div><div className="eyebrow">EFFECT LIBRARY</div><h2>Your sounds</h2></div><label>Send effects to<select value={targetSong} onChange={(event) => setTargetSong(event.target.value)}><option value="">Choose a song…</option>{songs.map((song) => <option value={songFolder(song)} key={song.id}>{song.title}</option>)}</select></label></div>
-        {message && <div className="effect-message">{message}</div>}{error && <div className="error">{error}</div>}
+        {message && <div className="effect-message">{message}{addedFolder && onOpenStudio && <button type="button" className="open-studio-button" onClick={() => onOpenStudio(addedFolder)}>Open Studio</button>}</div>}{error && <div className="error">{error}</div>}
         {!items.length && <div className="empty"><strong>No sound effects yet</strong><span>Generate a sound on the left. It will be saved here—not in Songs.</span></div>}
         <div className="effect-grid">{items.map((item) => <article className={`effect-card ${playing === item.id ? "playing" : ""}`} key={item.id}>
           <button className="effect-play" onClick={() => togglePreview(item)} aria-label={`${playing === item.id ? "Stop" : "Play"} ${item.name}`}>{playing === item.id ? "■" : "▶"}</button>

@@ -774,9 +774,36 @@ export default function App() {
     } catch (reason: any) { setError(reason?.message ?? String(reason)); }
   }
 
+  async function openStudioFromNav() {
+    const lastId = (() => { try { return localStorage.getItem("music3-last-studio-song"); } catch { return null; } })();
+    const projectSongs = songs.filter((song) => Boolean(song.studio || song.studio_imports?.length || song.studio_mixes?.length));
+    const song = selectedSong
+      ?? songs.find((item) => item.id === lastId)
+      ?? projectSongs[0]
+      ?? songs[0]
+      ?? null;
+    if (!song) {
+      setStudioView("library");
+      setError("Create or select a song first, then open Studio.");
+      return;
+    }
+    setError("");
+    await openAudioEditor(song);
+  }
+
+  async function openStudioFromEffects(folder: string) {
+    try {
+      const data = await getLibrary();
+      setSongs(data.items);
+      const song = data.items.find((item) => songFolderName(item) === folder);
+      if (song) await openAudioEditor(song);
+    } catch (reason: any) { setError(reason?.message ?? String(reason)); }
+  }
+
   async function openAudioEditor(song: Song) {
     const source = audioSources[song.id] || await audioUrl(song.audio_url);
     setSelectedSongId(song.id); setOpenMenu(null); setExpandedStems(null); setRightDrawer(null); setEditorSource(source); setEditorSong(song); setPlaying(null);
+    try { localStorage.setItem("music3-last-studio-song", song.id); } catch { /* ignore quota */ }
     const activeStemJob = status?.jobs.find((job) => job.kind === "stems" && ["queued", "running"].includes(job.status));
     if (!(song.stems?.length) && status?.stems.ready && !activeStemJob) {
       try { const result = await extractStems(songFolderName(song), "4"); setUtilityJob(result.job); }
@@ -863,7 +890,7 @@ export default function App() {
   return <div className="app">
     <header className="topbar">
       <div className="brand"><img className="brand-logo" src={logoUrl} alt="" /><span>MiniMax Music 3</span></div>
-      <nav className="top-modes" aria-label="Studio modes"><button className={studioView === "create" ? "active" : ""} onClick={() => setStudioView("create")}>Create</button><button className={studioView === "library" ? "active" : ""} onClick={() => setStudioView("library")}>Library</button><button className={studioView === "effects" ? "active" : ""} onClick={() => setStudioView("effects")}>Effects</button></nav>
+      <nav className="top-modes" aria-label="Studio modes"><button className={studioView === "create" && !editorSong ? "active" : ""} onClick={() => setStudioView("create")}>Create</button><button className={studioView === "library" && !editorSong ? "active" : ""} onClick={() => setStudioView("library")}>Library</button><button className={studioView === "effects" && !editorSong ? "active" : ""} onClick={() => setStudioView("effects")}>Effects</button><button className={editorSong ? "active" : ""} onClick={() => void openStudioFromNav()}>Studio</button></nav>
       <span className={`pill ${ready ? "ok" : "warn"}`}><i />{ready ? "Music 3 ready" : "engine unavailable"}</span>
       {gpu?.detected && <span className="pill ok desktop-status"><i />{gpu.name?.replace("NVIDIA GeForce ", "")}</span>}
       <span className="spacer" />
@@ -975,7 +1002,7 @@ export default function App() {
         </div>}
       </section>
 
-      {studioView === "effects" && <EffectsPage ready={Boolean(status?.sound_effects.ready)} detail={status?.sound_effects.detail ?? "Install the local sound-effects model and runtime to enable generation."} songs={songs} />}
+      {studioView === "effects" && <EffectsPage ready={Boolean(status?.sound_effects.ready)} detail={status?.sound_effects.detail ?? "Install the local sound-effects model and runtime to enable generation."} songs={songs} onOpenStudio={(folder) => void openStudioFromEffects(folder)} />}
 
       <nav className="edge-tabs right-edge" aria-label="Song panels">
         <button className={rightDrawer === "job" ? "active" : ""} onClick={() => setRightDrawer(rightDrawer === "job" ? null : "job")}><span>{[..."JOB"].map((letter, index) => <b key={`${letter}-${index}`}>{letter}</b>)}</span></button>

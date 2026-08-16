@@ -75,9 +75,10 @@ export type TimedLyrics = { language: string; translation_language?: string; ali
 export type StudioRange = { start: number; end: number };
 export type StudioEffectKind = "gain_up" | "gain_down" | "echo" | "reverb" | "auto_level" | "normalize" | "clarity" | "compressor";
 export type StudioEffectRegion = StudioRange & { id: string; kind: StudioEffectKind; amount: number };
-export type StudioTrackState = { name: string; gain: number; muted: boolean; solo: boolean; offset?: number; trim_start?: number; trim_end?: number | null; fade_in?: number; fade_out?: number; cuts?: StudioRange[]; effects?: StudioEffectRegion[] };
+export type StudioClip = { id: string; start: number; source_in: number; source_out: number | null; fade_in: number; fade_out: number; gain?: number; gain_left?: number; gain_right?: number };
+export type StudioTrackState = { name: string; gain: number; muted: boolean; solo: boolean; offset?: number; trim_start?: number; trim_end?: number | null; fade_in?: number; fade_out?: number; cuts?: StudioRange[]; effects?: StudioEffectRegion[]; clips?: StudioClip[]; use_clips?: boolean };
 export type StudioSession = { tracks: StudioTrackState[]; updated_at?: string };
-export type StudioImport = { file: string; name: string; original?: string };
+export type StudioImport = { file: string; name: string; original?: string; duration?: number; effect_id?: string };
 export type SoundEffect = { id: string; name: string; prompt: string; negative_prompt?: string; duration: number; seed: number | null; created_at: string; url: string };
 export type Playlist = { id: string; name: string; song_ids: string[]; created_at: string };
 export type Workspace = { id: string; name: string; song_ids: string[]; created_at: string };
@@ -111,7 +112,7 @@ export const importStudioTrack = async (folder: string, file: File) => request<{
 export const generateStudioSound = (folder: string, body: { prompt: string; name?: string; negative_prompt?: string; duration: number; seed?: number | null }) => request<{ job: Job }>(`/api/library/${encodeURIComponent(folder)}/studio/generate-sfx`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 export const getEffects = () => request<{ items: SoundEffect[] }>("/api/effects");
 export const generateEffect = (body: { prompt: string; name?: string; negative_prompt?: string; duration: number; seed?: number | null }) => request<{ job: Job }>("/api/effects/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-export const addEffectToStudio = (effectId: string, folder: string) => request<{ file: string; name: string; url: string }>(`/api/effects/${encodeURIComponent(effectId)}/add-to-studio/${encodeURIComponent(folder)}`, { method: "POST" });
+export const addEffectToStudio = (effectId: string, folder: string) => request<{ file: string; name: string; url: string; duration?: number }>(`/api/effects/${encodeURIComponent(effectId)}/add-to-studio/${encodeURIComponent(folder)}`, { method: "POST" });
 export const deleteEffect = (effectId: string) => request<{ deleted: boolean }>(`/api/effects/${encodeURIComponent(effectId)}`, { method: "DELETE" });
 export const removeStudioTrack = (folder: string, filename: string) => request<{ removed: boolean }>(`/api/library/${encodeURIComponent(folder)}/studio/tracks/${encodeURIComponent(filename)}`, { method: "DELETE" });
 export const synchronizeLyrics = (folder: string) => request<{ job: Job }>(`/api/library/${encodeURIComponent(folder)}/lyrics-sync`, { method: "POST" });
