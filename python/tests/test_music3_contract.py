@@ -127,7 +127,7 @@ class Music3ContractTests(unittest.TestCase):
         studio = (root / "src" / "SongStudio.tsx").read_text(encoding="utf-8")
         api = (root / "src" / "api.ts").read_text(encoding="utf-8")
         backend = (root / "python" / "main.py").read_text(encoding="utf-8")
-        for feature in ("Add track", "Fade in", "Fade out", "Trim song", "Mute range", "Export range", "Undo", "Redo", "This lane", "All lanes", "Echo", "Reverb", "Auto level", "Normalize", "Louder", "Quieter", "Razor", "Insert space", "EFFECTS & SOUNDS", "From your library", "Start of song", "Start of clip or range", "L/R split"):
+        for feature in ("Add track", "Fade in", "Fade out", "Trim song", "Mute range", "Export range", "Undo", "Redo", "This lane", "All lanes", "Echo", "Reverb", "Auto level", "Normalize", "Louder", "Quieter", "Razor", "Insert space", "EFFECTS & SOUNDS", "From your library", "Start of song", "Start of clip or range", "L/R split", "studio-ruler"):
             self.assertIn(feature, studio)
         self.assertIn("offset: position", studio)
         effects_page = (root / "src" / "EffectsPage.tsx").read_text(encoding="utf-8")

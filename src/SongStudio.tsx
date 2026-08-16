@@ -4,16 +4,18 @@
  */
 import { Component, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { addEffectToStudio, audioUrl, bounceStudioMix, cancelJob, downloadUrl, generateStudioSound, getEffects, getJob, importStudioTrack, removeStudioTrack, saveStudioSession, type Job, type Song, type SoundEffect, type StudioEffectKind, type StudioRange, type StudioTrackState } from "./api";
-import { CLIP_GAIN_MAX, MIN_WORKSPACE_SECONDS, clipAtTime, clipChannelGain, clipEnd, clipGain, clipLength, clockFine, cosineGain, ensureClips, fadeFactor, fitClipToSource, gainToLinePercent, insertSpace, lastClipEnd, linePercentToGain, makeClip, slicePeaks, sourceTimeAt, splitClipsAt, splitOutRanges, tickStep, workspaceDuration, type StudioClip } from "./studioClips";
+import { CLIP_GAIN_MAX, MIN_WORKSPACE_SECONDS, clipAtTime, clipChannelGain, clipEnd, clipGain, clipLength, clockFine, cosineGain, ensureClips, fadeFactor, fitClipToSource, gainToLinePercent, insertSpace, lastClipEnd, linePercentToGain, makeClip, slicePeaks, sourceTimeAt, splitClipsAt, splitOutRanges, stackEffects, tickStep, workspaceDuration, type StudioClip } from "./studioClips";
 
 type Track = { id: string; name: string; file: string; url: string; color: string; reference?: boolean; imported?: boolean; duration?: number };
 type TrackGraph = { source: MediaElementAudioSourceNode; gainL: GainNode; gainR: GainNode; low: BiquadFilterNode; mid: BiquadFilterNode; high: BiquadFilterNode; compressor: DynamicsCompressorNode; output: GainNode; echoDelay: DelayNode; echoFeedback: GainNode; echoWet: GainNode; reverb: ConvolverNode; reverbWet: GainNode };
 type Tool = "select" | "razor" | "range";
 type PeakSet = { mono: number[]; left: number[]; right: number[] };
+type EffectStamp = { id: string; start: number; end: number };
 type Drag =
-  | { kind: "move"; originX: number; snapshots: Record<string, Record<string, number>> }
+  | { kind: "move"; originX: number; snapshots: Record<string, Record<string, number>>; effects: Record<string, EffectStamp[]> }
   | { kind: "fade-in" | "fade-out"; trackId: string; clipId: string; origin: number }
   | { kind: "gain" | "gain-left" | "gain-right"; trackId: string; clipId: string; origin: number }
+  | { kind: "effect"; trackId: string; effectId: string; originX: number; start: number; end: number }
   | { kind: "range"; origin: number };
 type Props = {
   song: Song;
@@ -380,17 +382,17 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
     const active = (state.effects ?? []).filter((effect) => timelineTime >= effect.start && timelineTime <= effect.end);
     const strongest = (kind: StudioEffectKind) => Math.max(0, ...active.filter((effect) => effect.kind === kind).map((effect) => effect.amount));
     const clarity = strongest("clarity"); const compression = strongest("compressor"); const echo = strongest("echo"); const reverb = strongest("reverb");
-    const gainUp = active.filter((effect) => effect.kind === "gain_up").reduce((value, effect) => value * (1 + effect.amount * 1.5), 1);
-    const gainDown = active.filter((effect) => effect.kind === "gain_down").reduce((value, effect) => value * (1 - effect.amount * .85), 1);
+    const gainUp = active.filter((effect) => effect.kind === "gain_up").reduce((value, effect) => value * (1 + effect.amount * 3), 1);
+    const gainDown = active.filter((effect) => effect.kind === "gain_down").reduce((value, effect) => value * (1 - effect.amount * .92), 1);
     const autoLevel = strongest("auto_level"); const normalize = strongest("normalize"); const peak = Math.max(.01, ...(peaks[track.id]?.mono ?? [.75]));
     const clip = clipAtTime(state.clips ?? [], timelineTime, sourceOf(track.id));
-    const previewGain = Math.min(4, (clip ? clipGain(clip) : 1) * gainUp * gainDown * (1 + autoLevel * .55) * (normalize ? Math.min(2.5, .92 / peak) : 1));
-    const now = context.currentTime; const set = (parameter: AudioParam, value: number, speed = .025) => parameter.setTargetAtTime(value, now, speed);
-    set(graph.low.gain, clarity * 3); set(graph.mid.gain, clarity * 6); set(graph.high.gain, clarity * 4); set(graph.output.gain, previewGain);
+    const previewGain = Math.min(6, (clip ? clipGain(clip) : 1) * gainUp * gainDown * (1 + autoLevel * .9) * (normalize ? Math.min(3.2, 1.15 / peak) : 1) * (1 + compression * .85));
+    const now = context.currentTime; const set = (parameter: AudioParam, value: number, speed = .012) => parameter.setTargetAtTime(value, now, speed);
+    set(graph.low.gain, clarity * 8); set(graph.mid.gain, clarity * 10); set(graph.high.gain, clarity * 7); set(graph.output.gain, previewGain);
     set(graph.gainL.gain, clip ? Math.max(0, clip.gain_left ?? 1) : 1);
     set(graph.gainR.gain, clip ? Math.max(0, clip.gain_right ?? 1) : 1);
-    set(graph.compressor.threshold, compression ? -12 - compression * 24 : 0); set(graph.compressor.ratio, compression ? 2 + compression * 6 : 1);
-    set(graph.echoDelay.delayTime, .18 + echo * .22); set(graph.echoFeedback.gain, echo ? .12 + echo * .4 : 0); set(graph.echoWet.gain, echo * .38, .08); set(graph.reverbWet.gain, reverb * .45, .08);
+    set(graph.compressor.threshold, compression ? -18 - compression * 22 : 0); set(graph.compressor.ratio, compression ? 3 + compression * 9 : 1);
+    set(graph.echoDelay.delayTime, .28 + echo * .38); set(graph.echoFeedback.gain, echo ? .22 + echo * .5 : 0); set(graph.echoWet.gain, echo ? .35 + echo * .65 : 0, .02); set(graph.reverbWet.gain, reverb ? .3 + reverb * .7 : 0, .02);
   };
 
   const applyAudioAt = (timelineTime: number, shouldPlay: boolean) => {
@@ -501,7 +503,11 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
   const addSpace = () => {
     const seconds = selectionRange && selectionRange.end - selectionRange.start >= .05 ? selectionRange.end - selectionRange.start : 3;
     const ids = movableIds();
-    commitSettings((current) => Object.fromEntries(Object.entries(current).map(([id, state]) => ids.includes(id) ? [id, { ...state, use_clips: true, clips: insertSpace(state.clips ?? [], position, seconds, sourceOf(id)) }] : [id, state])));
+    commitSettings((current) => Object.fromEntries(Object.entries(current).map(([id, state]) => ids.includes(id) ? [id, {
+      ...state, use_clips: true,
+      clips: insertSpace(state.clips ?? [], position, seconds, sourceOf(id)),
+      effects: (state.effects ?? []).map((effect) => effect.start >= position - 0.001 ? { ...effect, start: effect.start + seconds, end: effect.end + seconds } : effect),
+    }] : [id, state])));
     setMessage(`Inserted ${seconds.toFixed(1)}s of space at ${clock(position)}. Slide clips or drop a sound into the gap.`);
   };
   const goToSongStart = () => seek(0);
@@ -521,11 +527,22 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
   const addEffect = (kind: StudioEffectKind) => {
     const range = requireRange(); const ids = targetIds(); if (!range || !ids.length) return;
     const group = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    commitSettings((current) => Object.fromEntries(Object.entries(current).map(([id, state]) => ids.includes(id) ? [id, { ...state, effects: [...(state.effects ?? []), { id: `${group}-${id}`, kind, amount: .55, ...range }] }] : [id, state])));
-    setMessage(`${EFFECT_LABELS[kind]} added to ${selectionScope === "all" ? "all lanes" : "the selected lane"} from ${clock(range.start)} to ${clock(range.end)}.`);
+    commitSettings((current) => Object.fromEntries(Object.entries(current).map(([id, state]) => ids.includes(id) ? [id, { ...state, effects: [...(state.effects ?? []), { id: `${group}-${id}`, kind, amount: .7, ...range }] }] : [id, state])));
+    const silent = ids.every((id) => { const track = tracks.find((item) => item.id === id); return track ? !audible(track) : true; });
+    setMessage(silent
+      ? `${EFFECT_LABELS[kind]} was added, but this lane is silent (muted, or the original mix is reference-only). Select Bass, Drums, Other, or Vocals, then press Play.`
+      : `${EFFECT_LABELS[kind]} added from ${clock(range.start)} to ${clock(range.end)}. Press Play and loop the range — amount is live.`);
   };
   const removeEffect = (trackId: string, effectId: string) => change(trackId, { effects: (settings[trackId]?.effects ?? []).filter((effect) => effect.id !== effectId) });
-  const changeEffectAmount = (trackId: string, effectId: string, amount: number) => change(trackId, { effects: (settings[trackId]?.effects ?? []).map((effect) => effect.id === effectId ? { ...effect, amount } : effect) });
+  const changeEffectAmount = (trackId: string, effectId: string, amount: number) => {
+    setSettings((current) => {
+      const next = { ...current, [trackId]: { ...current[trackId], effects: (current[trackId]?.effects ?? []).map((effect) => effect.id === effectId ? { ...effect, amount } : effect) } };
+      settingsRef.current = next;
+      return next;
+    });
+    const track = tracks.find((item) => item.id === trackId);
+    if (track) updatePreviewEffects(track, positionRef.current);
+  };
   const importTrack = async (file: File) => {
     setSaving(true); setMessage(`Adding ${file.name} at ${clock(position)}…`);
     try {
@@ -591,13 +608,32 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
   const beginMove = (trackId: string, clipId: string, clientX: number) => {
     const ids = movableIds();
     const snapshots: Record<string, Record<string, number>> = {};
+    const effects: Record<string, EffectStamp[]> = {};
     ids.forEach((id) => {
-      snapshots[id] = Object.fromEntries((settingsRef.current[id]?.clips ?? []).map((clip) => [clip.id, clip.start]));
+      const clips = settingsRef.current[id]?.clips ?? [];
+      snapshots[id] = Object.fromEntries(clips.map((clip) => [clip.id, clip.start]));
+      const moving = selectionScope === "all" ? clips : clips.filter((clip) => clip.id === clipId);
+      effects[id] = (settingsRef.current[id]?.effects ?? []).filter((effect) => moving.some((clip) => effect.end > clip.start && effect.start < clipEnd(clip, sourceOf(id)))).map((effect) => ({ id: effect.id, start: effect.start, end: effect.end }));
     });
     if (selectionScope === "lane") snapshots[trackId] = { [clipId]: settingsRef.current[trackId]?.clips?.find((clip) => clip.id === clipId)?.start ?? 0 };
     setHistory((items) => [...items.slice(-49), structuredClone(settingsRef.current)]); setFuture([]);
-    dragRef.current = { kind: "move", originX: clientX, snapshots };
+    dragRef.current = { kind: "move", originX: clientX, snapshots, effects };
     setSelected(trackId); setSelectedClipId(clipId);
+  };
+
+  const beginEffectMove = (trackId: string, effect: { id: string; start: number; end: number }, event: React.PointerEvent) => {
+    event.stopPropagation(); event.preventDefault();
+    (event.currentTarget.closest(".studio-track") as HTMLElement | null)?.setPointerCapture(event.pointerId);
+    setHistory((items) => [...items.slice(-49), structuredClone(settingsRef.current)]); setFuture([]);
+    dragRef.current = { kind: "effect", trackId, effectId: effect.id, originX: event.clientX, start: effect.start, end: effect.end };
+    setSelected(trackId); setTool("select");
+  };
+
+  const seekFromRuler = (event: React.PointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - bounds.left - LANE_ASIDE;
+    if (x < 0) return;
+    seek(Math.max(0, Math.min(workspace, x / Math.max(1, pxPerSec))));
   };
 
   const beginGain = (trackId: string, clip: StudioClip, kind: "gain" | "gain-left" | "gain-right", event: React.PointerEvent) => {
@@ -609,7 +645,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
   };
 
   const onTrackPointerDown = (track: Track, event: React.PointerEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest(".studio-handle, .studio-gain-line")) return;
+    if ((event.target as HTMLElement).closest(".studio-handle, .studio-gain-line, .studio-effect-region")) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     const time = pointerTime(event);
     setSelected(track.id);
@@ -641,8 +677,32 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
       const delta = (event.clientX - drag.originX) / Math.max(1, pxPerSec);
       commitLive((current) => Object.fromEntries(Object.entries(current).map(([id, state]) => {
         const starts = drag.snapshots[id]; if (!starts) return [id, state];
-        return [id, { ...state, use_clips: true, clips: (state.clips ?? []).map((clip) => starts[clip.id] == null ? clip : { ...clip, start: Math.max(0, starts[clip.id] + delta) }) }];
+        const shifted = new Map((drag.effects[id] ?? []).map((item) => [item.id, item]));
+        return [id, {
+          ...state, use_clips: true,
+          clips: (state.clips ?? []).map((clip) => starts[clip.id] == null ? clip : { ...clip, start: Math.max(0, starts[clip.id] + delta) }),
+          effects: (state.effects ?? []).map((effect) => {
+            const origin = shifted.get(effect.id); if (!origin) return effect;
+            const width = origin.end - origin.start;
+            const start = Math.max(0, origin.start + delta);
+            return { ...effect, start, end: start + width };
+          }),
+        }];
       })));
+      return;
+    }
+    if (drag.kind === "effect") {
+      const delta = (event.clientX - drag.originX) / Math.max(1, pxPerSec);
+      const width = drag.end - drag.start;
+      const start = Math.max(0, drag.start + delta);
+      commitLive((current) => ({
+        ...current,
+        [drag.trackId]: {
+          ...current[drag.trackId],
+          effects: (current[drag.trackId]?.effects ?? []).map((effect) => effect.id === drag.effectId ? { ...effect, start, end: start + width } : effect),
+        },
+      }));
+      setFadeTip(`${EFFECT_LABELS[(settingsRef.current[drag.trackId]?.effects ?? []).find((item) => item.id === drag.effectId)?.kind ?? "echo"]} · ${clock(start)}`);
       return;
     }
     if (drag.kind === "gain" || drag.kind === "gain-left" || drag.kind === "gain-right") {
@@ -661,6 +721,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
       });
       return;
     }
+    if (drag.kind !== "fade-in" && drag.kind !== "fade-out") return;
     const clips = settingsRef.current[drag.trackId]?.clips ?? [];
     const clip = clips.find((item) => item.id === drag.clipId); if (!clip) return;
     const length = clipLength(clip, sourceOf(drag.trackId));
@@ -721,6 +782,9 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
       if (event.key.toLowerCase() === "v") setTool("select");
       if (event.key.toLowerCase() === "c") setTool("razor");
       if (event.key.toLowerCase() === "r") setTool("range");
+      if (!event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "t") { setSelectionScope("lane"); setMessage("Edits apply to this lane. Press A for all lanes."); return; }
+      if (!event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "a") { setSelectionScope("all"); setMessage("Edits apply to all lanes. Press T for this lane."); return; }
+      if (!event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "l") { setSelectionScope((value) => value === "all" ? "lane" : "all"); return; }
       if ((event.key === "+" || event.key === "=")) zoomBy(1.15);
       if (event.key === "-" || event.key === "_") zoomBy(0.87);
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && selectedClipId) {
@@ -771,7 +835,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
       <div className="studio-tool-group"><button title="Undo last edit" disabled={!history.length} onClick={undo}>↶ Undo</button><button title="Redo edit" disabled={!future.length} onClick={redo}>↷ Redo</button></div>
       <div className="studio-scope" role="group" aria-label="Editing tool"><button className={tool === "select" ? "active" : ""} title="Arrow · move clips (V)" onClick={() => setTool("select")}>➤ Move</button><button className={tool === "razor" ? "active" : ""} title="Razor · cut clips (C)" onClick={() => setTool("razor")}>✁ Razor</button><button className={tool === "range" ? "active" : ""} title="Range · select time (R)" onClick={() => setTool("range")}>▮ Range</button></div>
       <div className="studio-range-readout"><span>{selectionScope === "all" ? "ALL-LANE RANGE" : "LANE RANGE"}</span><b>{selectionRange ? `${clock(selectionRange.start)} – ${clock(selectionRange.end)}` : fadeTip ?? "Select a clip or drag a range"}</b></div>
-      <div className="studio-scope" role="group" aria-label="Selection scope"><button className={selectionScope === "lane" ? "active" : ""} onClick={() => setSelectionScope("lane")}>This lane</button><button className={selectionScope === "all" ? "active" : ""} title="Drag any clip to slide every lane together, including Original mix" onClick={() => setSelectionScope("all")}>All lanes</button></div>
+      <div className="studio-scope" role="group" aria-label="Selection scope"><button className={selectionScope === "lane" ? "active" : ""} title="This lane (T). L toggles." onClick={() => setSelectionScope("lane")}>This lane</button><button className={selectionScope === "all" ? "active" : ""} title="All lanes (A). L toggles. Drag any clip to slide every lane together." onClick={() => setSelectionScope("all")}>All lanes</button></div>
       <div className="studio-tool-group"><button className={loopSelection ? "active" : ""} disabled={!selectionRange} onClick={() => setLoopSelection((value) => !value)}>↻ Loop</button><button disabled={!selectionRange} onClick={trimSong}>Trim song</button><button disabled={!selectionRange || !targetIds().length} onClick={silenceRange}>Mute range</button><button disabled={!selectionRange || !targetIds().length} onClick={() => fadeSong("in")}>Fade in</button><button disabled={!selectionRange || !targetIds().length} onClick={() => fadeSong("out")}>Fade out</button><button title="Split at the playhead and push later audio to the right" disabled={!targetIds().length} onClick={addSpace}>Insert space</button><button disabled={!selectionRange || saving} onClick={() => void exportSelection()}>Export range</button></div>
       <div className="studio-zoom"><button title="Zoom out" onClick={() => zoomBy(0.85)}>−</button><input aria-label="Timeline zoom" type="range" min="6" max="160" step="1" value={pxPerSec} onChange={(event) => setPxPerSec(Number(event.target.value))} /><button title="Zoom in" onClick={() => zoomBy(1.18)}>+</button></div>
       <button className="add-track-button" disabled={saving} onClick={() => setSourceChooser(true)}>＋ Add track</button><input ref={fileInput} className="studio-file-input" type="file" accept=".wav,.mp3,.flac,.m4a,.aac,.ogg,audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importTrack(file); }}/>
@@ -779,11 +843,12 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
     <div className="studio-body">
       <main className="studio-timeline" ref={timelineRef}>
         <div className="studio-scroll" style={{ width: LANE_ASIDE + canvasWidth }}>
-          <div className="studio-ruler" style={{ paddingLeft: LANE_ASIDE }}>
+          <div className="studio-ruler" style={{ paddingLeft: LANE_ASIDE }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); seekFromRuler(event); }} onPointerMove={(event) => { if (event.buttons) seekFromRuler(event); }}>
             {ticks.map((time) => <span key={time} style={{ left: LANE_ASIDE + time * pxPerSec }}>{clock(time)}</span>)}
+            <i className="studio-ruler-playhead" style={{ left: LANE_ASIDE + position * pxPerSec }} />
           </div>
           {tracks.map((track) => { const state = settings[track.id]; const isAudible = audible(track); const clips = state?.clips ?? []; return <article key={track.id} className={`studio-lane ${selected === track.id ? "selected" : ""} ${!isAudible ? "inaudible" : ""}`} onClick={() => setSelected(track.id)}>
-            <aside style={{ borderColor: track.color }}><strong>{track.name}</strong>{track.reference ? <small>{hasStems ? "Reference · never doubled with stems" : "Original song mix"}</small> : track.imported ? <small>Imported audio · included in custom mix</small> : <small>Separated from the generated mix</small>}<div className="lane-buttons"><button className={state?.muted ? "active" : ""} disabled={track.reference && hasStems} onClick={(event) => { event.stopPropagation(); change(track.id, { muted: !state?.muted }); }}>M</button><button className={state?.solo ? "active" : ""} disabled={Boolean(track.reference && hasStems)} onClick={(event) => { event.stopPropagation(); change(track.id, { solo: !state?.solo }); }}>S</button></div><label>VOL <input type="range" min="0" max="1" step=".01" value={state?.gain ?? 1} disabled={track.reference && hasStems} onChange={(event) => change(track.id, { gain: Number(event.target.value) })}/><b>{Math.round((state?.gain ?? 1) * 100)}%</b></label></aside>
+            <aside style={{ borderColor: track.color }}><strong>{track.name}</strong>{track.reference ? <small>{hasStems ? "Reference · never doubled with stems" : "Original song mix"}</small> : track.imported ? <small>Imported audio · included in custom mix</small> : <small>Separated from the generated mix</small>}<div className="lane-buttons"><button className={state?.muted ? "active" : ""} disabled={track.reference && hasStems} onClick={(event) => { event.stopPropagation(); change(track.id, { muted: !state?.muted }); }}>M</button><button className={state?.solo ? "active" : ""} disabled={Boolean(track.reference && hasStems)} onClick={(event) => { event.stopPropagation(); change(track.id, { solo: !state?.solo }); }}>S</button></div><div className="studio-scope lane-scope" role="group" aria-label="Selection scope" onClick={(event) => event.stopPropagation()}><button className={selectionScope === "lane" ? "active" : ""} title="This lane (T)" onClick={() => setSelectionScope("lane")}>Lane</button><button className={selectionScope === "all" ? "active" : ""} title="All lanes (A)" onClick={() => setSelectionScope("all")}>All</button></div><label>VOL <input type="range" min="0" max="1" step=".01" value={state?.gain ?? 1} disabled={track.reference && hasStems} onChange={(event) => change(track.id, { gain: Number(event.target.value) })}/><b>{Math.round((state?.gain ?? 1) * 100)}%</b></label></aside>
             <div className={`studio-track tool-${tool}`} style={{ width: canvasWidth }} onPointerDown={(event) => onTrackPointerDown(track, event)} onPointerMove={onTrackPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={(event) => { event.preventDefault(); const raw = event.dataTransfer.getData("application/x-minimax-effect"); if (!raw) return; const item = JSON.parse(raw) as SoundEffect; void addLibrarySound(item, timeFromClientX(event.clientX, event.currentTarget)); }}>
               {clips.map((clip) => {
                 const length = Math.max(0.05, clipLength(clip, sourceOf(track.id)));
@@ -802,7 +867,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
                 </div>;
               })}
               {selectionRange && (selectionScope === "all" || selected === track.id) && <i className="studio-selection" style={{ left: selectionRange.start * pxPerSec, width: Math.max(2, (selectionRange.end - selectionRange.start) * pxPerSec) }}/>}
-              {(state?.effects ?? []).map((effect) => <i key={effect.id} className={`studio-effect-region ${effect.kind}`} title={`${EFFECT_LABELS[effect.kind]} · ${clock(effect.start)}–${clock(effect.end)}`} style={{ left: effect.start * pxPerSec, width: Math.max(3, (effect.end - effect.start) * pxPerSec) }}><span>{EFFECT_LABELS[effect.kind]}</span></i>)}
+              {stackEffects(state?.effects ?? []).map((effect) => <i key={effect.id} className={`studio-effect-region ${effect.kind} ${position >= effect.start && position <= effect.end ? "live" : ""}`} title={`${EFFECT_LABELS[effect.kind]} · ${clock(effect.start)}–${clock(effect.end)} · drag to move`} style={{ left: effect.start * pxPerSec, width: Math.max(3, (effect.end - effect.start) * pxPerSec), bottom: 4 + effect.stack * 17 }} onPointerDown={(event) => beginEffectMove(track.id, effect, event)}><span>{EFFECT_LABELS[effect.kind]}</span></i>)}
               <i className="studio-playhead" style={{ left: position * pxPerSec }}/>
             </div>
             <audio ref={(element) => { audioRefs.current[track.id] = element; }} crossOrigin="anonymous" preload="metadata" src={track.url} onLoadedMetadata={(event) => { if (track.id === "mix") setSourceDuration(event.currentTarget.duration || sourceDuration); }} />
@@ -821,7 +886,7 @@ function SongStudioView({ song, mixUrl, stemJob, stemsReady, soundEffectsReady, 
           <label>Left <input type="range" min="0" max={CLIP_GAIN_MAX} step=".01" value={selectedClip.gain_left ?? 1} onChange={(event) => changeClips(activeTrack.id, clipsOf(activeTrack.id).map((clip) => clip.id === selectedClip.id ? { ...clip, gain_left: Number(event.target.value) } : clip))} /><b>{Math.round((selectedClip.gain_left ?? 1) * 100)}%</b></label>
           <label>Right <input type="range" min="0" max={CLIP_GAIN_MAX} step=".01" value={selectedClip.gain_right ?? 1} onChange={(event) => changeClips(activeTrack.id, clipsOf(activeTrack.id).map((clip) => clip.id === selectedClip.id ? { ...clip, gain_right: Number(event.target.value) } : clip))} /><b>{Math.round((selectedClip.gain_right ?? 1) * 100)}%</b></label>
         </div>}
-        <section className="studio-fx"><div className="eyebrow">REGION EFFECTS</div><p>Select time on a waveform, choose This lane or All lanes, then add an effect.</p><div className="studio-fx-grid">{(["gain_down", "gain_up", "echo", "reverb", "auto_level", "normalize", "clarity", "compressor"] as StudioEffectKind[]).map((kind) => <button key={kind} disabled={!selectionRange || !targetIds().length} onClick={() => addEffect(kind)}>{EFFECT_LABELS[kind]}</button>)}</div>{(selectedState?.effects ?? []).length > 0 && <div className="studio-fx-list">{selectedState.effects?.map((effect) => <div key={effect.id}><header><strong>{EFFECT_LABELS[effect.kind]}</strong><span>{clock(effect.start)}–{clock(effect.end)}</span><button aria-label={`Remove ${EFFECT_LABELS[effect.kind]}`} onClick={() => removeEffect(activeTrack.id, effect.id)}>×</button></header><label>Amount <input type="range" min="0" max="1" step=".01" value={effect.amount} onChange={(event) => changeEffectAmount(activeTrack.id, effect.id, Number(event.target.value))}/><b>{Math.round(effect.amount * 100)}%</b></label></div>)}</div>}</section>
+        <section className="studio-fx"><div className="eyebrow">REGION EFFECTS</div><p>Drag a range, then add an effect. Several effects stack as separate chips and all stay active. Press Play — you will not hear them while paused. If stems are loaded, apply effects to Bass, Drums, Other, or Vocals, not the silent original mix.</p><div className="studio-fx-grid">{(["gain_down", "gain_up", "echo", "reverb", "auto_level", "normalize", "clarity", "compressor"] as StudioEffectKind[]).map((kind) => <button key={kind} disabled={!selectionRange || !targetIds().length} onClick={() => addEffect(kind)}>{EFFECT_LABELS[kind]}</button>)}</div>{(selectedState?.effects ?? []).length > 0 && <div className="studio-fx-list">{selectedState.effects?.map((effect) => <div key={effect.id}><header><strong>{EFFECT_LABELS[effect.kind]}</strong><span>{clock(effect.start)}–{clock(effect.end)}</span><button aria-label={`Remove ${EFFECT_LABELS[effect.kind]}`} onClick={() => removeEffect(activeTrack.id, effect.id)}>×</button></header><label>Amount <input type="range" min="0" max="1" step=".01" value={effect.amount} onChange={(event) => changeEffectAmount(activeTrack.id, effect.id, Number(event.target.value))}/><b>{Math.round(effect.amount * 100)}%</b></label></div>)}</div>}</section>
         <section className="studio-library">
           <div className="eyebrow">EFFECTS & SOUNDS</div>
           <p>Drag a library sound onto the timeline. It keeps its real length — a 5s thunder hit stays 5 seconds.</p>

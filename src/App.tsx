@@ -371,7 +371,7 @@ export default function App() {
   const [instrumental, setInstrumental] = useState(false);
   const [duration, setDuration] = useState(120);
   const [autoDuration, setAutoDuration] = useState(true);
-  const [tiledDecode, setTiledDecode] = useState(true);
+  const [tiledDecode, setTiledDecode] = useState(false);
   const [generationJob, setGenerationJob] = useState<Job | null>(null);
   const [utilityJob, setUtilityJob] = useState<Job | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
@@ -553,6 +553,13 @@ export default function App() {
   }, [songs]);
 
   useEffect(() => {
+    if (!editingSong) return;
+    const latest = songs.find((song) => song.id === editingSong.id);
+    if (!latest || latest.cover_url === editingSong.cover_url) return;
+    setEditingSong((current) => current && current.id === latest.id ? { ...current, cover_url: latest.cover_url, cover_error: latest.cover_error } : current);
+  }, [songs, editingSong?.id, editingSong?.cover_url]);
+
+  useEffect(() => {
     const dismiss = (event: PointerEvent) => {
       if (!(event.target instanceof Element) || !event.target.closest("[data-song-menu]")) { setOpenMenu(null); setOpenSongSubmenu(null); setSongMenuPosition(null); }
     };
@@ -566,6 +573,7 @@ export default function App() {
 
   function toggleSongMenu(songId: string, button: HTMLButtonElement) {
     if (openMenu === songId) { setOpenMenu(null); setOpenSongSubmenu(null); setSongMenuPosition(null); return; }
+    setRightDrawer(null);
     const rect = button.getBoundingClientRect();
     const menuWidth = 220; const gap = 9; const edge = 10;
     const estimatedHeight = Math.min(520, Math.max(180, window.innerHeight - 76));
@@ -672,8 +680,16 @@ export default function App() {
   }
 
   async function openOutputFolder() {
-    try { await invoke<string>("open_outputs_folder"); }
-    catch { await openOutputs(); }
+    const song = selectedSong;
+    if (song) {
+      try { await openSongFolder(songFolderName(song)); return; }
+      catch (reason: any) { setError(reason?.message ?? String(reason)); }
+    }
+    try { await openOutputs(); }
+    catch {
+      try { await invoke<string>("open_outputs_folder"); }
+      catch (reason: any) { setError(reason?.message ?? String(reason)); }
+    }
   }
 
   function editSong(song: Song) {
@@ -688,7 +704,7 @@ export default function App() {
     setSteps(song.steps ?? 30);
     setDirectionStrength(Math.max(0, Math.min(100, Math.round(((song.cfg ?? 1.5) - 1.0) * 100))));
     setCreativeLatitude(Math.max(0, Math.min(100, Math.round(((song.top_k ?? 50) - 10) / 0.8))));
-    setTiledDecode(song.tiled_decode ?? true);
+    setTiledDecode(song.tiled_decode ?? false);
     setExcludeStyles(song.exclude_styles ?? "");
     setVocalGender(song.vocal_gender ?? "auto");
     setOpenMenu(null);
@@ -725,7 +741,7 @@ export default function App() {
     try {
       await updateSong(songFolderName(editingSong), { title: editTitle.trim(), artist: editArtist.trim(), album: editAlbum.trim(), genre: editGenre.trim(), year: editYear.trim(), track_number: editTrackNumber.trim(), description: editDescription, lyrics: editLyrics, english_translation: editTranslation, lyrics_language: editLyricsLanguage });
       const result = await regenerateCover(songFolderName(editingSong), editCoverDirection.trim());
-      setUtilityJob(result.job); setEditingSong(null); setRightDrawer("job");
+      setUtilityJob(result.job);
     } catch (reason: any) { setError(reason?.message ?? String(reason)); }
     finally { setLibraryBusy(false); }
   }
@@ -915,7 +931,7 @@ export default function App() {
             </label>
             <div className="create-options">
               <label className="switch"><input type="checkbox" checked={instrumental} onChange={(event) => setInstrumental(event.target.checked)} /><span />Instrumental</label>
-              <label className="switch"><input type="checkbox" checked={tiledDecode} onChange={(event) => setTiledDecode(event.target.checked)} /><span />Low-memory decode</label>
+              <label className="switch" title="On: decode in tiles to save VRAM. Off (default on this 3090): faster full decode, fewer seams."><input type="checkbox" checked={tiledDecode} onChange={(event) => setTiledDecode(event.target.checked)} /><span />Low-memory decode</label>
             </div>
             <label className="switch duration-switch"><input type="checkbox" checked={autoDuration} onChange={(event) => setAutoDuration(event.target.checked)} /><span />Auto duration</label>
             {autoDuration
@@ -1071,7 +1087,7 @@ export default function App() {
     {editingSong && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setEditingSong(null); }}>
       <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="edit-song-title">
         <div className="modal-head"><div><div className="eyebrow">LIBRARY</div><h2 id="edit-song-title">Edit song details</h2></div><button aria-label="Close" onClick={() => setEditingSong(null)}>✕</button></div>
-        <section className="edit-cover-section"><div className={`edit-cover-preview ${coverSources[editingSong.id] ? "has-cover" : ""}`} style={coverSources[editingSong.id] ? { backgroundImage: `url(${coverSources[editingSong.id]})` } : undefined}>{!coverSources[editingSong.id] && <span>♪</span>}</div><div className="edit-cover-actions"><strong>Cover artwork</strong><p>This artwork is embedded in MP3 and FLAC downloads.</p><input ref={coverUploadInput} className="cover-upload-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadEditedCover(file); }} /><button type="button" disabled={libraryBusy} onClick={() => coverUploadInput.current?.click()}>Upload your own art</button><label>AI visual direction<input value={editCoverDirection} onChange={(event) => setEditCoverDirection(event.target.value)} placeholder="Optional — leave blank to use the song details" /></label><button type="button" className="cover-regenerate-button" disabled={libraryBusy || !status?.cover_art.ready} onClick={() => void regenerateEditedCover()}>Regenerate cover art</button></div></section>
+        <section className="edit-cover-section"><div className={`edit-cover-preview ${coverSources[editingSong.id] ? "has-cover" : ""}`} style={coverSources[editingSong.id] ? { backgroundImage: `url(${coverSources[editingSong.id]})` } : undefined}>{!coverSources[editingSong.id] && <span>♪</span>}</div><div className="edit-cover-actions"><strong>Cover artwork</strong><p>This artwork is embedded in MP3 and FLAC downloads.</p><input ref={coverUploadInput} className="cover-upload-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadEditedCover(file); }} /><button type="button" disabled={libraryBusy} onClick={() => coverUploadInput.current?.click()}>Upload your own art</button><label>AI visual direction<input value={editCoverDirection} onChange={(event) => setEditCoverDirection(event.target.value)} placeholder="Optional — leave blank to use the song details" /></label><button type="button" className="cover-regenerate-button" disabled={libraryBusy || !status?.cover_art.ready || Boolean(utilityJob && utilityJob.kind === "cover_art" && ["queued", "running"].includes(utilityJob.status))} onClick={() => void regenerateEditedCover()}>{utilityJob && utilityJob.kind === "cover_art" && ["queued", "running"].includes(utilityJob.status) ? "Generating cover…" : "Regenerate cover art"}</button>{utilityJob?.kind === "cover_art" && ["queued", "running"].includes(utilityJob.status) && <div className="edit-cover-job"><span>{utilityJob.phase}</span><b>{Math.round(utilityJob.progress * 100)}%</b><div className="progress"><i style={{ width: `${Math.round(utilityJob.progress * 100)}%` }} /></div></div>}{utilityJob?.kind === "cover_art" && utilityJob.status === "failed" && <div className="error">{utilityJob.error || "Cover generation failed."}</div>}</div></section>
         <label>Song title<input autoFocus value={editTitle} maxLength={120} onChange={(event) => setEditTitle(event.target.value)} /></label>
         <div className="metadata-grid"><label>Artist<input value={editArtist} maxLength={160} onChange={(event) => setEditArtist(event.target.value)} placeholder="Artist or band name" /></label><label>Album<input value={editAlbum} maxLength={160} onChange={(event) => setEditAlbum(event.target.value)} placeholder="Album name" /></label><label>Genre<input value={editGenre} maxLength={120} onChange={(event) => setEditGenre(event.target.value)} placeholder="Genre" /></label><label>Year<input value={editYear} inputMode="numeric" maxLength={4} onChange={(event) => setEditYear(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="2026" /></label><label>Track number<input value={editTrackNumber} maxLength={7} onChange={(event) => setEditTrackNumber(event.target.value.replace(/[^\d/]/g, ""))} placeholder="1 or 1/12" /></label></div>
         <label>Music description<textarea rows={7} value={editDescription} onChange={(event) => setEditDescription(event.target.value)} /></label>

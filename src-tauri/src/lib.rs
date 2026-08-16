@@ -203,7 +203,7 @@ fn sidecar_error(state: State<'_, Arc<Mutex<Option<String>>>>) -> Option<String>
 
 #[tauri::command]
 fn open_outputs_folder() -> Result<String, String> {
-    let path = project_root().join("outputs");
+    let path = project_root().join("outputs").join("library");
     std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
     #[cfg(target_os = "windows")]
     hidden_command("explorer").arg(&path).spawn().map_err(|error| error.to_string())?;

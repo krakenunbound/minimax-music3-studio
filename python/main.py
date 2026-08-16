@@ -125,7 +125,7 @@ class GenerateRequest(BaseModel):
     steps: int = Field(default=30, ge=10, le=60)
     cfg: float = Field(default=1.5, ge=0.1, le=10.0)
     top_k: int = Field(default=50, ge=1, le=16384)
-    tiled_decode: bool = True
+    tiled_decode: bool = False
     exclude_styles: str = Field(default="", max_length=2000)
     vocal_gender: str = Field(default="auto", pattern="^(auto|female|male)$")
     english_translation: str = Field(default="", max_length=24000)
@@ -1196,10 +1196,10 @@ def _studio_effect_filters(filters: list[str], input_label: str, lane_index: int
         out = f"fx{lane_index}_{effect_index}"
         amount = max(0.0, min(1.0, effect.amount))
         if effect.kind in {"gain_up", "gain_down"}:
-            gain = 1.0 + amount * 1.5 if effect.kind == "gain_up" else 1.0 - amount * .85
+            gain = 1.0 + amount * 3.0 if effect.kind == "gain_up" else 1.0 - amount * .92
             filters.append(f"[{current}]volume={gain:.5f}:enable='{window}'[{out}]")
         elif effect.kind == "clarity":
-            low = 1.0 + amount * 2.0; presence = 2.0 + amount * 4.0; air = 1.0 + amount * 3.0
+            low = 1.0 + amount * 6.0; presence = 3.0 + amount * 7.0; air = 1.5 + amount * 6.0
             filters.append(f"[{current}]bass=g={low:.3f}:f=140:enable='{window}',equalizer=f=2600:t=q:w=1.1:g={presence:.3f}:enable='{window}',treble=g={air:.3f}:f=6500:enable='{window}'[{out}]")
         elif effect.kind == "auto_level":
             filters.append(f"[{current}]dynaudnorm=f=150:g={8.0 + amount * 17.0:.3f}:p=0.95:m=10:enable='{window}'[{out}]")
@@ -1207,9 +1207,9 @@ def _studio_effect_filters(filters: list[str], input_label: str, lane_index: int
             dry = f"fxdry{lane_index}_{effect_index}"; wet_in = f"fxin{lane_index}_{effect_index}"; wet = f"fxwet{lane_index}_{effect_index}"
             filters.append(f"[{current}]asplit=2[{dry}][{wet_in}]")
             if effect.kind == "echo":
-                delays = "180|360"; decay = f"{0.18 + amount * .32:.3f}|{0.08 + amount * .22:.3f}"; wet_gain = 0.12 + amount * .24
+                delays = "280|560"; decay = f"{0.32 + amount * .4:.3f}|{0.16 + amount * .28:.3f}"; wet_gain = 0.28 + amount * .45
             else:
-                delays = "28|47|71|103"; decay = f"{0.20 + amount * .18:.3f}|{0.15 + amount * .16:.3f}|{0.11 + amount * .13:.3f}|{0.07 + amount * .10:.3f}"; wet_gain = 0.08 + amount * .19
+                delays = "32|54|82|118"; decay = f"{0.32 + amount * .28:.3f}|{0.24 + amount * .22:.3f}|{0.18 + amount * .18:.3f}|{0.12 + amount * .14:.3f}"; wet_gain = 0.22 + amount * .4
             filters.append(f"[{wet_in}]volume=0:enable='not({window})',aecho=0.8:{wet_gain:.3f}:{delays}:{decay}[{wet}]")
             filters.append(f"[{dry}][{wet}]amix=inputs=2:duration=longest:normalize=0[{out}]")
         elif effect.kind in {"normalize", "compressor"}:
@@ -1360,11 +1360,30 @@ def stem_file(folder: str, filename: str):
     return FileResponse(target, media_type="audio/wav", filename=f"{slug(song_dir.name)}-{target.name}")
 
 
+def _reveal_in_explorer(path: Path) -> Path:
+    """Open Explorer on the file's folder, with the file selected when it exists."""
+    path = path.resolve()
+    if path.is_file():
+        subprocess.Popen(["explorer", "/select,", str(path)], creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        return path.parent
+    path.mkdir(parents=True, exist_ok=True)
+    os.startfile(path)
+    return path
+
+
 @app.post("/api/library/{folder}/open")
 def open_song_folder(folder: str):
-    target = resolve_song_folder(folder)
-    os.startfile(target)
-    return {"path": str(target)}
+    song_dir = resolve_song_folder(folder)
+    audio_name = "song.wav"
+    try:
+        audio_name = str(json.loads((song_dir / "song.json").read_text(encoding="utf-8")).get("audio") or "song.wav")
+    except (OSError, json.JSONDecodeError):
+        pass
+    if Path(audio_name).name != audio_name:
+        audio_name = "song.wav"
+    audio = song_dir / audio_name
+    opened = _reveal_in_explorer(audio if audio.is_file() else song_dir)
+    return {"path": str(opened)}
 
 
 @app.delete("/api/library/{folder}")
@@ -1433,7 +1452,10 @@ def logs(limit: int = 500, since_id: int | None = None):
 def clear_logs(): ring.clear(); return {"cleared": True}
 
 @app.post("/api/open-outputs")
-def open_outputs(): OUTPUTS_ROOT.mkdir(parents=True, exist_ok=True); os.startfile(OUTPUTS_ROOT); return {"path": str(OUTPUTS_ROOT)}
+def open_outputs():
+    LIBRARY_ROOT.mkdir(parents=True, exist_ok=True)
+    opened = _reveal_in_explorer(LIBRARY_ROOT)
+    return {"path": str(opened)}
 
 
 atexit.register(music3_engine.unload)

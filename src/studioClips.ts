@@ -217,6 +217,18 @@ export function tickStep(pxPerSec: number): number {
   return 30;
 }
 
+/** Assign overlapping region effects to vertical stack rows so chips do not hide each other. */
+export function stackEffects<T extends { start: number; end: number }>(effects: T[]): (T & { stack: number })[] {
+  const order = [...effects].sort((left, right) => left.start - right.start || left.end - right.end);
+  const rows: number[] = [];
+  return order.map((effect) => {
+    let stack = rows.findIndex((end) => effect.start >= end - 0.02);
+    if (stack < 0) { stack = rows.length; rows.push(effect.end); }
+    else rows[stack] = effect.end;
+    return { ...effect, stack };
+  });
+}
+
 export function clockFine(value: number): string {
   if (!Number.isFinite(value) || value < 0) return "0:00.00";
   const minutes = Math.floor(value / 60);
