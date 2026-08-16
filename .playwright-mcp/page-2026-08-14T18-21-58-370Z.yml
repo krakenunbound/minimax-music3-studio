@@ -1,0 +1,106 @@
+- main [ref=f1e2]:
+  - complementary [ref=f1e3]:
+    - generic [ref=f1e5]:
+      - paragraph [ref=f1e6]: Video Studio
+      - heading "Visualizer" [level=1] [ref=f1e7]
+    - generic [ref=f1e8]:
+      - generic [ref=f1e9]: Track
+      - generic [ref=f1e10]:
+        - generic [ref=f1e11]:
+          - generic [ref=f1e12]: Neon Undertow (Full Length)
+          - generic [ref=f1e13]: "Workspace: My Workspace"
+        - generic [ref=f1e14]: 16:9
+      - generic [ref=f1e16]:
+        - generic [ref=f1e17]: Length
+        - strong [ref=f1e18]: 3:05
+      - generic [ref=f1e19]: Ready.
+    - generic [ref=f1e20]:
+      - generic [ref=f1e21]: Canvas Format
+      - generic [ref=f1e22]:
+        - button "16:9" [ref=f1e23] [cursor=pointer]
+        - button "9:16" [ref=f1e24] [cursor=pointer]
+      - generic [ref=f1e25]:
+        - generic [ref=f1e26]: Landscape
+        - generic [ref=f1e27]: 1280 x 720 render canvas
+      - generic [ref=f1e28]: Landscape works for YouTube, Rumble, and X. Portrait works for TikTok, Reels, and Shorts.
+    - generic [ref=f1e29]:
+      - generic [ref=f1e30]: Preset
+      - generic [ref=f1e31]:
+        - button "Orbit" [ref=f1e32] [cursor=pointer]
+        - button "Bars" [ref=f1e33] [cursor=pointer]
+        - button "Pulse" [ref=f1e34] [cursor=pointer]
+        - button "Wave" [ref=f1e35] [cursor=pointer]
+    - generic [ref=f1e36]:
+      - generic [ref=f1e37]: Background
+      - generic [ref=f1e38]:
+        - button "Random" [ref=f1e39] [cursor=pointer]
+        - button "Image" [ref=f1e40] [cursor=pointer]
+        - button "Video" [ref=f1e41] [cursor=pointer]
+      - generic [ref=f1e42]:
+        - button "Upload Image" [ref=f1e43] [cursor=pointer]
+        - button "Upload Video" [ref=f1e44] [cursor=pointer]
+      - generic [ref=f1e45]:
+        - generic [ref=f1e46]: Dimming
+        - slider "Dimming" [ref=f1e47]: "58"
+    - generic [ref=f1e48]:
+      - generic [ref=f1e49]: Color
+      - generic [ref=f1e50]:
+        - button [ref=f1e51] [cursor=pointer]
+        - button [ref=f1e52] [cursor=pointer]
+        - button [ref=f1e53] [cursor=pointer]
+        - button [ref=f1e54] [cursor=pointer]
+        - button [ref=f1e55] [cursor=pointer]
+        - button [ref=f1e56] [cursor=pointer]
+      - generic [ref=f1e57]:
+        - generic [ref=f1e58]:
+          - generic [ref=f1e59]: Primary
+          - textbox "Primary" [ref=f1e60]: "#a855f7"
+        - generic [ref=f1e61]:
+          - generic [ref=f1e62]: Secondary
+          - textbox "Secondary" [ref=f1e63]: "#22d3ee"
+    - generic [ref=f1e64]:
+      - generic [ref=f1e65]: Particles
+      - generic [ref=f1e66]:
+        - button "Dust" [ref=f1e67] [cursor=pointer]
+        - button "Rain" [ref=f1e68] [cursor=pointer]
+        - button "Stars" [ref=f1e69] [cursor=pointer]
+        - button "Embers" [ref=f1e70] [cursor=pointer]
+        - button "Warp" [ref=f1e71] [cursor=pointer]
+        - button "Sparks" [ref=f1e72] [cursor=pointer]
+      - generic [ref=f1e73]:
+        - generic [ref=f1e74]: Amount
+        - slider "Amount" [ref=f1e75]: "64"
+      - generic [ref=f1e76]: A sheet of rain falling in one wind, with longer downward streaks.
+    - generic [ref=f1e77]:
+      - generic [ref=f1e78]: Lyrics Overlay
+      - generic [ref=f1e79]:
+        - button "On" [ref=f1e80] [cursor=pointer]
+        - button "Off" [ref=f1e81] [cursor=pointer]
+      - generic [ref=f1e82]: Loaded 70 timed lyric lines for Neon Undertow (Full Length). Lyrics scroll upward as the song plays, with the sung line highlighted.
+      - button "Re-sync Lyrics" [ref=f1e112] [cursor=pointer]
+    - generic [ref=f1e83]:
+      - generic [ref=f1e84]: Local Cover Art
+      - generic [ref=f1e85]: Cover art ready via local SD 1.5.
+      - generic [ref=f1e86]:
+        - button "Generate Cover" [ref=f1e87] [cursor=pointer]
+        - button "Use As Background" [ref=f1e88] [cursor=pointer]
+    - generic [ref=f1e89]:
+      - generic [ref=f1e90]: Render
+      - generic [ref=f1e91]:
+        - button "Render Video (MP4)" [ref=f1e92] [cursor=pointer]
+        - button "Save Frame" [ref=f1e93] [cursor=pointer]
+      - generic [ref=f1e94]: Ready.
+  - generic [ref=f1e95]:
+    - generic [ref=f1e96]:
+      - generic [ref=f1e97]:
+        - paragraph [ref=f1e98]: Preview
+        - generic [ref=f1e99]: Landscape Preview
+      - generic [ref=f1e100]: 16:9 framing for YouTube, Rumble, and X.
+    - generic [ref=f1e103]:
+      - button "Play" [ref=f1e104] [cursor=pointer]
+      - generic [ref=f1e105]: 0:05
+      - slider [ref=f1e106]: "3"
+      - generic [ref=f1e107]: 3:04
+      - generic [ref=f1e108]:
+        - generic [ref=f1e109]: Volume
+        - slider "Volume" [ref=f1e110]: "0.85"

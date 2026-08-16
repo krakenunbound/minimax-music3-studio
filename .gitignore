@@ -1,0 +1,14 @@
+node_modules/
+dist/
+src-tauri/target/
+python/venv/
+python/runtime/
+python/lyrics_runtime/
+python/sfx_runtime/
+python/_runtime_probe/
+python/vendor/ComfyUI/
+python/**/__pycache__/
+*.pyc
+models/
+outputs/
+*.log

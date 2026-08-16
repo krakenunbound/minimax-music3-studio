@@ -1,0 +1,106 @@
+- main [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e5]:
+      - paragraph [ref=e6]: Video Studio
+      - heading "Visualizer" [level=1] [ref=e7]
+    - generic [ref=e8]:
+      - generic [ref=e9]: Track
+      - generic [ref=e10]:
+        - generic [ref=e11]:
+          - generic [ref=e12]: Neon Undertow (Full Length)
+          - generic [ref=e13]: "Workspace: My Workspace"
+        - generic [ref=e14]: 9:16
+      - generic [ref=e16]:
+        - generic [ref=e17]: Length
+        - strong [ref=e18]: 3:05
+      - generic [ref=e19]: Ready.
+    - generic [ref=e20]:
+      - generic [ref=e21]: Canvas Format
+      - generic [ref=e22]:
+        - button "16:9" [ref=e23] [cursor=pointer]
+        - button "9:16" [ref=e24] [cursor=pointer]
+      - generic [ref=e25]:
+        - generic [ref=e26]: Portrait
+        - generic [ref=e27]: 720 x 1280 render canvas
+      - generic [ref=e28]: Portrait keeps titles, lyrics, and cover art centered for short-form vertical posts.
+    - generic [ref=e29]:
+      - generic [ref=e30]: Preset
+      - generic [ref=e31]:
+        - button "Orbit" [ref=e32] [cursor=pointer]
+        - button "Bars" [ref=e33] [cursor=pointer]
+        - button "Pulse" [ref=e34] [cursor=pointer]
+        - button "Wave" [ref=e35] [cursor=pointer]
+    - generic [ref=e36]:
+      - generic [ref=e37]: Background
+      - generic [ref=e38]:
+        - button "Random" [ref=e39] [cursor=pointer]
+        - button "Image" [ref=e40] [cursor=pointer]
+        - button "Video" [ref=e41] [cursor=pointer]
+      - generic [ref=e42]:
+        - button "Upload Image" [ref=e43] [cursor=pointer]
+        - button "Upload Video" [ref=e44] [cursor=pointer]
+      - generic [ref=e45]:
+        - generic [ref=e46]: Dimming
+        - slider "Dimming" [ref=e47]: "58"
+    - generic [ref=e48]:
+      - generic [ref=e49]: Color
+      - generic [ref=e50]:
+        - button [ref=e51] [cursor=pointer]
+        - button [ref=e52] [cursor=pointer]
+        - button [ref=e53] [cursor=pointer]
+        - button [ref=e54] [cursor=pointer]
+        - button [ref=e55] [cursor=pointer]
+        - button [ref=e56] [cursor=pointer]
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e59]: Primary
+          - textbox "Primary" [ref=e60]: "#a855f7"
+        - generic [ref=e61]:
+          - generic [ref=e62]: Secondary
+          - textbox "Secondary" [ref=e63]: "#22d3ee"
+    - generic [ref=e64]:
+      - generic [ref=e65]: Particles
+      - generic [ref=e66]:
+        - button "Dust" [ref=e67] [cursor=pointer]
+        - button "Rain" [ref=e68] [cursor=pointer]
+        - button "Stars" [ref=e69] [cursor=pointer]
+        - button "Embers" [ref=e70] [cursor=pointer]
+        - button "Warp" [ref=e71] [cursor=pointer]
+        - button "Sparks" [active] [ref=e72] [cursor=pointer]
+      - generic [ref=e73]:
+        - generic [ref=e74]: Amount
+        - slider "Amount" [ref=e75]: "64"
+      - generic [ref=e76]: Audio-reactive sparks bursting from the visualizer ring.
+    - generic [ref=e77]:
+      - generic [ref=e78]: Lyrics Overlay
+      - generic [ref=e79]:
+        - button "On" [ref=e80] [cursor=pointer]
+        - button "Off" [ref=e81] [cursor=pointer]
+      - generic [ref=e82]: Loaded 70 timed lyric lines for Neon Undertow (Full Length). Lyrics scroll upward as the song plays, with the sung line highlighted.
+      - button "Re-sync Lyrics" [ref=e84] [cursor=pointer]
+    - generic [ref=e85]:
+      - generic [ref=e86]: Local Cover Art
+      - generic [ref=e87]: Cover art ready via local SD 1.5.
+      - generic [ref=e88]:
+        - button "Generate Cover" [ref=e89] [cursor=pointer]
+        - button "Use As Background" [ref=e90] [cursor=pointer]
+    - generic [ref=e91]:
+      - generic [ref=e92]: Render
+      - generic [ref=e93]:
+        - button "Render Video (MP4)" [ref=e94] [cursor=pointer]
+        - button "Save Frame" [ref=e95] [cursor=pointer]
+      - generic [ref=e96]: Ready.
+  - generic [ref=e97]:
+    - generic [ref=e98]:
+      - generic [ref=e99]:
+        - paragraph [ref=e100]: Preview
+        - generic [ref=e101]: Portrait Preview
+      - generic [ref=e102]: 9:16 framing for TikTok, Reels, and Shorts.
+    - generic [ref=e105]:
+      - button "Play" [ref=e106] [cursor=pointer]
+      - generic [ref=e107]: 0:05
+      - slider [ref=e108]: "3"
+      - generic [ref=e109]: 3:04
+      - generic [ref=e110]:
+        - generic [ref=e111]: Volume
+        - slider "Volume" [ref=e112]: "0.85"

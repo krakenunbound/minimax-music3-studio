@@ -1,0 +1,8 @@
+MiniMax Music 3 inference implementation source:
+https://github.com/Comfy-Org/ComfyUI
+
+Pinned revision:
+8f37cf8c833a8f2d3c62e2adbccebfd165623481
+
+MiniMaxM3 imports this source as a private Python library. It does not launch,
+connect to, or expose a ComfyUI server or frontend.

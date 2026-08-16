@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MiniMax Music 3 Studio",
+  "version": "0.1.0",
+  "identifier": "com.thekraken.minimaxmusic3",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1424",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "title": "MiniMax Music 3 Studio",
+      "width": 1540,
+      "height": 960,
+      "minWidth": 1180,
+      "minHeight": 720,
+      "decorations": true,
+      "resizable": true,
+      "dragDropEnabled": true,
+      "backgroundColor": "#06121C"
+    }],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": false, "targets": ["nsis"] }
+}
