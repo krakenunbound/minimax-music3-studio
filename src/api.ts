@@ -83,10 +83,25 @@ export type SoundEffect = { id: string; name: string; prompt: string; negative_p
 export type Playlist = { id: string; name: string; song_ids: string[]; created_at: string };
 export type Workspace = { id: string; name: string; song_ids: string[]; created_at: string };
 export type Song = { id: string; title: string; artist?: string; album?: string; genre?: string; year?: string; track_number?: string; description: string; lyrics: string; english_translation?: string; lyrics_language?: string; timed_lyrics?: TimedLyrics | null; instrumental: boolean; seed: number | null; duration?: number; requested_duration?: number; auto_duration?: boolean; steps?: number; cfg?: number; top_k?: number; tiled_decode?: boolean; exclude_styles?: string; vocal_gender?: "auto" | "female" | "male"; prompt_tokens?: number; audio_url: string; cover_url?: string | null; cover_error?: string | null; stems?: string[]; studio?: StudioSession; studio_imports?: StudioImport[]; studio_mixes?: { file: string; variant: string; created_at: string }[]; created_at: string; folder: string; folder_name: string };
-export type Status = { model: ModelStatus; cover_art: CoverArtStatus; stems: UtilityStatus; sound_effects: UtilityStatus & { runtime_ready?: boolean; processor?: string; size_bytes?: number; present?: number; required?: number }; lyrics_sync: UtilityStatus; exports: UtilityStatus; service: ServiceStatus; gpu: GpuStatus; jobs: Job[] };
+export type AiCapabilityStatus = { configured: boolean; enabled: boolean; provider: string };
+export type AiProviderPublic = { label: string; configured: boolean; last4: string | null; updated_at: string | null };
+export type AiCapabilityState = { enabled: boolean; provider: string; model: string };
+export type AiKeysView = {
+  version: number;
+  catalog: {
+    providers: Record<string, { label: string; jobs: string[] }>;
+    capabilities: Record<string, { label: string; blurb: string; providers: string[]; local_ok: boolean; how?: { summary: string; rules: string[]; constraints?: Record<string, unknown> } }>;
+  };
+  providers: Record<string, AiProviderPublic>;
+  capabilities: Record<string, AiCapabilityState>;
+};
+export type Status = { model: ModelStatus; cover_art: CoverArtStatus; stems: UtilityStatus; sound_effects: UtilityStatus & { runtime_ready?: boolean; processor?: string; size_bytes?: number; present?: number; required?: number }; lyrics_sync: UtilityStatus; exports: UtilityStatus; service: ServiceStatus; gpu: GpuStatus; ai?: Record<string, AiCapabilityStatus>; jobs: Job[] };
 export type LogEntry = { id: number; ts: number; level: string; logger: string; message: string };
 
 export const getStatus = () => request<Status>("/api/status");
+export const getAiKeys = () => request<AiKeysView>("/api/settings/ai-keys");
+export const saveAiKeys = (body: { providers?: Record<string, { key?: string; clear?: boolean }>; capabilities?: Record<string, { enabled?: boolean; provider?: string; model?: string }> }) => request<AiKeysView>("/api/settings/ai-keys", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+export const assistWriting = (body: { action: "generate" | "optimize" | "title"; idea?: string; random?: boolean; title?: string; description?: string; lyrics?: string; language?: string }) => request<{ lyrics: string; title: string; description?: string }>("/api/assist/writing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 export const refreshModels = () => request<ModelStatus>("/api/models/refresh", { method: "POST" });
 export const clearMemory = () => request<{ cleared: boolean; had_worker: boolean }>("/api/clear-memory", { method: "POST" });
 export const getLibrary = () => request<{ items: Song[] }>("/api/library");

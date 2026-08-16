@@ -491,6 +491,25 @@ class StudioTest(TestCase):
             self.assertFalse(incomplete.exists())
             self.assertTrue(complete.exists())
 
+    def test_generate_names_wav_after_title(self) -> None:
+        from jobs import Job
+        from tempfile import TemporaryDirectory
+
+        def fake_generate(job, request, output):
+            output.write_bytes(b"RIFF")
+            return {"duration": 12, "sample_rate": 44100}
+
+        params = main.GenerateRequest(title="Kom Heim", description="A song").model_dump()
+        params["seed"] = 1
+        job = Job("abcdef123456", "music3", params)
+        with TemporaryDirectory() as temp, patch.object(main, "LIBRARY_ROOT", Path(temp)), patch.object(main.music3_engine, "generate", side_effect=fake_generate), patch.object(main.cover_art, "available", return_value=False):
+            result = main.generate(job)
+            folder = Path(result["folder"])
+            self.assertEqual("Kom Heim.wav", result["audio"])
+            self.assertTrue(result["audio_url"].endswith("/Kom%20Heim.wav"))
+            self.assertTrue((folder / "Kom Heim.wav").is_file())
+            self.assertFalse((folder / "song.wav").exists())
+
     def test_failed_generation_removes_its_incomplete_folder(self) -> None:
         from jobs import Job
         from tempfile import TemporaryDirectory
@@ -512,9 +531,11 @@ class StudioTest(TestCase):
             (folder / "song.json").write_text(json.dumps({"id": "one", "title": "One", "audio": "song.wav", "created_at": "2026"}), encoding="utf-8")
             with patch.object(main, "LIBRARY_ROOT", root):
                 items = main.library()
-        self.assertEqual("One", items[0]["title"])
-        self.assertEqual("/api/library/song-one/song.wav", items[0]["audio_url"])
-        self.assertEqual("song-one", items[0]["folder_name"])
+            self.assertEqual("One", items[0]["title"])
+            self.assertEqual("/api/library/song-one/One.wav", items[0]["audio_url"])
+            self.assertEqual("song-one", items[0]["folder_name"])
+            self.assertTrue((folder / "One.wav").is_file())
+            self.assertFalse((folder / "song.wav").exists())
 
     def test_song_details_can_be_updated(self) -> None:
         from tempfile import TemporaryDirectory
@@ -522,18 +543,22 @@ class StudioTest(TestCase):
             root = Path(temp)
             folder = root / "song-one"
             folder.mkdir()
+            (folder / "song.wav").write_bytes(b"RIFF")
             (folder / "song.json").write_text(json.dumps({"id": "one", "title": "Old", "audio": "song.wav"}), encoding="utf-8")
             with patch.object(main, "LIBRARY_ROOT", root):
                 result = main.update_song("song-one", main.SongUpdateRequest(title="New", artist="Kraken", album="Sea Songs", genre="Ritual folk", year="2026", track_number="3", description="Changed", lyrics="Words"))
             saved = json.loads((folder / "song.json").read_text(encoding="utf-8"))
-        self.assertTrue(result["updated"])
-        self.assertEqual("New", saved["title"])
-        self.assertEqual("Changed", saved["description"])
-        self.assertEqual("Kraken", saved["artist"])
-        self.assertEqual("Sea Songs", saved["album"])
-        self.assertEqual("Ritual folk", saved["genre"])
-        self.assertEqual("2026", saved["year"])
-        self.assertEqual("3", saved["track_number"])
+            self.assertTrue(result["updated"])
+            self.assertEqual("New", saved["title"])
+            self.assertEqual("New.wav", saved["audio"])
+            self.assertTrue((folder / "New.wav").is_file())
+            self.assertFalse((folder / "song.wav").exists())
+            self.assertEqual("Changed", saved["description"])
+            self.assertEqual("Kraken", saved["artist"])
+            self.assertEqual("Sea Songs", saved["album"])
+            self.assertEqual("Ritual folk", saved["genre"])
+            self.assertEqual("2026", saved["year"])
+            self.assertEqual("3", saved["track_number"])
 
     def test_editing_translation_updates_timed_lines_without_resync(self) -> None:
         from tempfile import TemporaryDirectory

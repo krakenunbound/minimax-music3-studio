@@ -16,9 +16,10 @@ import modernMetalArt from "./assets/templates/modern-metal.webp";
 import nordicRitualFolkArt from "./assets/templates/nordic-ritual-folk.webp";
 import synthwaveArt from "./assets/templates/synthwave.webp";
 import Logs from "./Logs";
+import KeysDrawer from "./KeysDrawer";
 import SongStudio from "./SongStudio";
 import EffectsPage from "./EffectsPage";
-import { addSongToPlaylist, audioUrl, cancelJob, clearMemory, convertAudio, createPlaylist, createWorkspace, deletePlaylist, deleteSong, deleteWorkspace, downloadUrl, extractStems, generate, getJob, getLibrary, getPlaylists, getStatus, getWorkspaces, moveSongToWorkspace, openOutputs, openSongFolder, refreshModels, regenerateCover, removeSongFromPlaylist, synchronizeLyrics, updateSong, uploadSongCover, videoStudioUrl, type Job, type Playlist, type Song, type Status, type TimedLyricLine, type TimedLyrics, type TimedWord, type Workspace } from "./api";
+import { addSongToPlaylist, assistWriting, audioUrl, cancelJob, clearMemory, convertAudio, createPlaylist, createWorkspace, deletePlaylist, deleteSong, deleteWorkspace, downloadUrl, extractStems, generate, getJob, getLibrary, getPlaylists, getStatus, getWorkspaces, moveSongToWorkspace, openOutputs, openSongFolder, refreshModels, regenerateCover, removeSongFromPlaylist, saveAiKeys, synchronizeLyrics, updateSong, uploadSongCover, videoStudioUrl, type Job, type Playlist, type Song, type Status, type TimedLyricLine, type TimedLyrics, type TimedWord, type Workspace } from "./api";
 
 const SAMPLE = "A cinematic alternative rock song with an intimate opening, expressive lead vocal, live drums, bass and electric guitars, building through a wide chorus into an evolving bridge and resolved outro.";
 const LYRIC_LANGUAGES = [
@@ -80,6 +81,39 @@ function sentence(value: string) {
 }
 
 const structuredHeading = (name: string) => `^\\s*(?:#{1,6}\\s*)?${name}\\s*:?\\s*$`;
+
+const LYRIC_SECTION = /^\s*\[(?:Intro|Verse|Pre-Chorus|Chorus|Post-Chorus|Bridge|Instrumental|Solo|Outro)\]\s*$/im;
+
+function splitCaptionAndLyrics(text: string): { description: string; lyrics: string } {
+  const body = text.trim();
+  const match = body.match(LYRIC_SECTION);
+  if (!match || match.index == null) {
+    return /global metadata/i.test(body) ? { description: body, lyrics: "" } : { description: "", lyrics: body };
+  }
+  const before = body.slice(0, match.index).trim();
+  const after = body.slice(match.index).trim();
+  if (/global metadata|vocal details|^arrangement\b/im.test(before)) return { description: before, lyrics: after };
+  return { description: "", lyrics: body };
+}
+
+function unwrapWriting(raw: string): { lyrics: string; title: string; description: string } {
+  const text = raw.trim().replace(/^```(?:json|text)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const grab = (name: string) => {
+    const match = text.match(new RegExp(`"${name}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, "s"));
+    if (!match) return "";
+    try { return JSON.parse(`"${match[1]}"`) as string; }
+    catch { return match[1].replace(/\\n/g, "\n").replace(/\\"/g, '"'); }
+  };
+  let lyrics = grab("lyrics");
+  let title = grab("title");
+  if (!lyrics) {
+    const titled = text.match(/^title\s*:\s*(.+)\n+([\s\S]+)$/i);
+    if (titled) { title = titled[1].trim().replace(/^"|"$/g, ""); lyrics = titled[2].trim(); }
+    else lyrics = text;
+  }
+  const split = splitCaptionAndLyrics(lyrics);
+  return { lyrics: split.lyrics, title, description: split.description };
+}
 
 function isStructuredCaption(value: string) {
   return ["Global Metadata", "Vocal Details", "Arrangement"].every((heading) => new RegExp(structuredHeading(heading), "im").test(value));
@@ -405,6 +439,14 @@ export default function App() {
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [studioView, setStudioView] = useState<"create" | "library" | "effects">("create");
   const [systemOpen, setSystemOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
+  const [lyricAssist, setLyricAssist] = useState<{ source: "create" | "edit"; mode: "generate" | "optimize" } | null>(null);
+  const [lyricIdea, setLyricIdea] = useState("");
+  const [lyricPreview, setLyricPreview] = useState("");
+  const [lyricPreviewTitle, setLyricPreviewTitle] = useState("");
+  const [lyricPreviewDescription, setLyricPreviewDescription] = useState("");
+  const [lyricBusy, setLyricBusy] = useState(false);
+  const [lyricError, setLyricError] = useState("");
   const [refreshingModels, setRefreshingModels] = useState(false);
   const [rightDrawer, setRightDrawer] = useState<"job" | "details" | null>(null);
   const [selectedSongId, setSelectedSongId] = useState<string | null>(null);
@@ -564,7 +606,7 @@ export default function App() {
       if (!(event.target instanceof Element) || !event.target.closest("[data-song-menu]")) { setOpenMenu(null); setOpenSongSubmenu(null); setSongMenuPosition(null); }
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setOpenMenu(null); setOpenSongSubmenu(null); setSongMenuPosition(null); setExpandedStems(null); setEditingSong(null); setDeleteTarget(null); setCoverTarget(null); setStemTarget(null); setSystemOpen(false); setLogsOpen(false); setRightDrawer(null); setEditorSong(null); setVideoTool(null); setPromptHelpOpen(false); setTemplatesOpen(false); }
+      if (event.key === "Escape") { setOpenMenu(null); setOpenSongSubmenu(null); setSongMenuPosition(null); setExpandedStems(null); setEditingSong(null); setDeleteTarget(null); setCoverTarget(null); setStemTarget(null); setSystemOpen(false); setLogsOpen(false); setKeysOpen(false); setLyricAssist(null); setRightDrawer(null); setEditorSong(null); setVideoTool(null); setPromptHelpOpen(false); setTemplatesOpen(false); }
     };
     window.addEventListener("pointerdown", dismiss);
     window.addEventListener("keydown", escape);
@@ -609,6 +651,75 @@ export default function App() {
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId) ?? null;
   const librarySongs = librarySection === "projects" ? songs.filter((song) => Boolean(song.studio || song.studio_imports?.length || song.studio_mixes?.length)) : librarySection === "playlists" && activePlaylist ? songs.filter((song) => activePlaylist.song_ids.includes(song.id)) : librarySection === "workspaces" && activeWorkspace ? songs.filter((song) => activeWorkspace.song_ids.includes(song.id)) : songs;
   const showLibrarySongs = librarySection === "songs" || librarySection === "projects" || Boolean(activePlaylist) || Boolean(activeWorkspace);
+  const writing = status?.ai?.writing;
+  const writingConfigured = Boolean(writing?.configured);
+  const writingEnabled = Boolean(writing?.enabled);
+
+  function openLyricAssist(source: "create" | "edit", mode: "generate" | "optimize") {
+    const currentLyrics = source === "edit" ? editLyrics : lyrics;
+    if (mode === "optimize" && !currentLyrics.replace(/\[[^\]]+\]/g, "").trim()) {
+      setError("Write or paste some lyrics first, then Optimize.");
+      return;
+    }
+    if (!writingConfigured) {
+      setKeysOpen(true); setLogsOpen(false); setSystemOpen(false);
+      setError("Save a Writing key in KEYS, then use Generate Lyrics.");
+      return;
+    }
+    setLyricError(""); setLyricPreview(""); setLyricPreviewTitle(""); setLyricPreviewDescription(""); setLyricIdea("");
+    setLyricAssist({ source, mode });
+    const cleaned = unwrapWriting(currentLyrics);
+    if (cleaned.lyrics && (/"lyrics"\s*:/.test(currentLyrics) || cleaned.description)) {
+      setLyricPreview(cleaned.lyrics);
+      setLyricPreviewTitle(cleaned.title);
+      setLyricPreviewDescription(cleaned.description);
+    }
+  }
+
+  async function runLyricAssist(random = false) {
+    if (!lyricAssist) return;
+    setLyricBusy(true); setLyricError("");
+    try {
+      if (writingConfigured && !writingEnabled) {
+        await saveAiKeys({ capabilities: { writing: { enabled: true, provider: writing?.provider || "gemini" } } });
+        await refresh();
+      }
+      const sourceCreate = lyricAssist.source === "create";
+      const existing = unwrapWriting(sourceCreate ? lyrics : editLyrics);
+      const result = await assistWriting({
+        action: lyricAssist.mode === "optimize" ? "optimize" : "generate",
+        random: lyricAssist.mode === "generate" && random,
+        idea: lyricIdea,
+        title: sourceCreate ? title : editTitle,
+        description: (sourceCreate ? description : editDescription) || existing.description,
+        lyrics: existing.lyrics || (sourceCreate ? lyrics : editLyrics),
+        language: sourceCreate ? lyricsLanguage : editLyricsLanguage,
+      });
+      const cleaned = unwrapWriting(result.lyrics || "");
+      setLyricPreview(cleaned.lyrics);
+      setLyricPreviewTitle((result.title || cleaned.title || "").trim());
+      setLyricPreviewDescription((result.description || cleaned.description || "").trim());
+    } catch (reason: any) {
+      setLyricError(reason?.message ?? String(reason));
+    } finally { setLyricBusy(false); }
+  }
+
+  function applyLyricAssist() {
+    if (!lyricAssist || !lyricPreview.trim()) return;
+    const cleaned = unwrapWriting(lyricPreview);
+    const nextTitle = (lyricPreviewTitle || cleaned.title).trim();
+    const nextDescription = (lyricPreviewDescription || cleaned.description).trim();
+    if (lyricAssist.source === "edit") {
+      setEditLyrics(cleaned.lyrics);
+      if (nextTitle && (!editTitle.trim() || editTitle.trim() === "Untitled Song")) setEditTitle(nextTitle);
+      if (nextDescription) setEditDescription(nextDescription);
+    } else {
+      setLyrics(cleaned.lyrics);
+      if (nextTitle && (!title.trim() || title.trim() === "Untitled Song")) setTitle(nextTitle);
+      if (nextDescription) setDescription(nextDescription);
+    }
+    setLyricAssist(null);
+  }
 
   async function createSong() {
     setError("");
@@ -915,9 +1026,11 @@ export default function App() {
 
     <main className="studio-shell">
       <nav className="edge-tabs left-edge" aria-label="Local utility panels">
-        <button className={logsOpen ? "active" : ""} onClick={() => { setLogsOpen((open) => !open); setSystemOpen(false); }}><span>{[..."LOGS"].map((letter, index) => <b key={`${letter}-${index}`}>{letter}</b>)}</span></button>
+        <button className={logsOpen ? "active" : ""} onClick={() => { setLogsOpen((open) => !open); setSystemOpen(false); setKeysOpen(false); }}><span>{[..."LOGS"].map((letter, index) => <b key={`${letter}-${index}`}>{letter}</b>)}</span></button>
         <i />
-        <button className={systemOpen ? "active" : ""} onClick={() => { setSystemOpen((open) => !open); setLogsOpen(false); }}><span>{[..."SYSTEM"].map((letter, index) => <b key={`${letter}-${index}`}>{letter}</b>)}</span></button>
+        <button className={keysOpen ? "active" : ""} onClick={() => { setKeysOpen((open) => !open); setLogsOpen(false); setSystemOpen(false); }}><span>{[..."KEYS"].map((letter, index) => <b key={`${letter}-${index}`}>{letter}</b>)}</span></button>
+        <i />
+        <button className={systemOpen ? "active" : ""} onClick={() => { setSystemOpen((open) => !open); setLogsOpen(false); setKeysOpen(false); }}><span>{[..."SYSTEM"].map((letter, index) => <b key={`${letter}-${index}`}>{letter}</b>)}</span></button>
       </nav>
 
       <section className={`composer main-view ${studioView === "create" ? "active" : ""}`}>
@@ -948,7 +1061,7 @@ export default function App() {
             </section>}
           </div>
           <div className="create-lyrics">
-            {!instrumental ? <><label>Lyrics<div className="lyrics-toolbar"><div className="lyric-direction-pills"><span>Insert:</span>{["Spoken", "Spoken Countdown", "Whispered", "Chanted", "Rapped", "Call and Response"].map((tag) => <button type="button" key={tag} onClick={() => insertLyricDirection(tag)}>{tag}</button>)}</div><button type="button" className="prepare-lyrics-button" disabled={!lyrics.trim()} onClick={formatCurrentLyrics}>↻ Prepare pasted lyrics</button></div><textarea ref={lyricsField} value={lyrics} onChange={(event) => setLyrics(event.target.value)} rows={18} placeholder="[Verse]\nWords to sing…" /><small>Only official song-section tags remain in the lyric stream. Performance directions move into the Music Description.</small></label><div className="translation-grid"><label>Lyrics language<select value={lyricsLanguage} onChange={(event) => setLyricsLanguage(event.target.value)}>{LYRIC_LANGUAGES.map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select></label><label>English translation (display only)<textarea value={englishTranslation} onChange={(event) => setEnglishTranslation(event.target.value)} rows={7} placeholder="One translated line for each sung lyric line. Section tags are optional." /><small>Saved for karaoke display and review. It is never sent to Music 3 or sung.</small></label></div></> : <div className="instrumental-stage"><span>♫</span><strong>Instrumental song</strong><p>Music 3 will build the arrangement from your description without vocals or written lyrics.</p></div>}
+            {!instrumental ? <><label>Lyrics<div className="lyrics-toolbar"><div className="lyric-direction-pills"><span>Insert:</span>{["Spoken", "Spoken Countdown", "Whispered", "Chanted", "Rapped", "Call and Response"].map((tag) => <button type="button" key={tag} onClick={() => insertLyricDirection(tag)}>{tag}</button>)}</div><div className="lyric-ai-actions"><button type="button" className="lyric-ai-button" title={writingConfigured ? (writingEnabled ? "Rewrite the current lyrics" : "Uses your Writing key (turns Enable on)") : "Save a Writing key in KEYS first"} disabled={!lyrics.replace(/\[[^\]]+\]/g, "").trim()} onClick={() => openLyricAssist("create", "optimize")}>Optimize</button><button type="button" className="lyric-ai-button generate" title={writingConfigured ? "Open lyric idea helper" : "Save a Writing key in KEYS first"} onClick={() => openLyricAssist("create", "generate")}>Generate Lyrics</button><button type="button" className="prepare-lyrics-button" disabled={!lyrics.trim()} onClick={formatCurrentLyrics}>↻ Prepare pasted lyrics</button></div></div><textarea ref={lyricsField} value={lyrics} onChange={(event) => setLyrics(event.target.value)} rows={18} placeholder="[Verse]\nWords to sing…" /><small>Only official song-section tags remain in the lyric stream. Performance directions move into the Music Description.</small></label><div className="translation-grid"><label>Lyrics language<select value={lyricsLanguage} onChange={(event) => setLyricsLanguage(event.target.value)}>{LYRIC_LANGUAGES.map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select></label><label>English translation (display only)<textarea value={englishTranslation} onChange={(event) => setEnglishTranslation(event.target.value)} rows={7} placeholder="One translated line for each sung lyric line. Section tags are optional." /><small>Saved for karaoke display and review. It is never sent to Music 3 or sung.</small></label></div></> : <div className="instrumental-stage"><span>♫</span><strong>Instrumental song</strong><p>Music 3 will build the arrangement from your description without vocals or written lyrics.</p></div>}
           </div>
         </div>
         <div className="create-footer">
@@ -1054,6 +1167,7 @@ export default function App() {
       <section className={`runtime-card ${ready ? "ready" : "blocked"}`}><strong>{ready ? "Ready to generate" : "Setup needed"}</strong><p>{blocker}</p><code>Private local worker · no external service</code></section>
     </aside>}
     <Logs open={logsOpen} onClose={() => setLogsOpen(false)} width={leftDrawerWidth} onResizeStart={(event) => beginDrawerResize("left", event)} />
+    <KeysDrawer open={keysOpen} onClose={() => setKeysOpen(false)} width={leftDrawerWidth} onResizeStart={(event) => beginDrawerResize("left", event)} />
     {rightDrawer === "job" && <aside className="right-drawer job-drawer" style={{ width: rightDrawerWidth }}><div className="drawer-resizer left" role="separator" aria-label="Resize Job panel" onPointerDown={(event) => beginDrawerResize("right", event)} /><div className="drawer-head"><div><div className="eyebrow">CURRENT JOB</div><h2>{displayJob?.kind === "music3" ? "Song generation" : displayJob?.kind === "cover_art" ? "Cover art" : displayJob?.kind === "stems" ? "Stem extraction" : displayJob?.kind === "lyrics_sync" ? "Lyric synchronization" : "Generation"}</h2></div><button onClick={() => setRightDrawer(null)}>✕</button></div>{displayJob ? <><div className={`job-banner ${displayJob.status}`}><div><strong>{displayJob.phase}</strong><span>{displayJob.error || timingLabel(displayJob)}</span></div><div className="progress"><i style={{ width: `${Math.round(displayJob.progress * 100)}%` }} /></div>{displayJob.stage_progress != null && displayJob.phase.includes("thumbnail") && <div className="stage-progress"><span>Thumbnail</span><b>{Math.round(displayJob.stage_progress * 100)}%</b><div className="progress"><i style={{ width: `${Math.round(displayJob.stage_progress * 100)}%` }} /></div></div>}</div><section className="card kv"><span>status</span><b>{displayJob.status}</b><span>progress</span><b>{Math.round(displayJob.progress * 100)}%</b><span>elapsed</span><b>{elapsedLabel(displayJob)}</b><span>remaining</span><b>{remainingLabel(displayJob) || "—"}</b><span>active jobs</span><b>{activeJobs}</b></section>{["queued", "running"].includes(displayJob.status) && <button className="danger memory" onClick={() => void cancelJob(displayJob.id)}>Cancel {displayJob.kind === "music3" ? "generation" : "task"}</button>}</> : <div className="drawer-empty"><span>♫</span><strong>No active generation</strong><p>Your next Music 3 job will appear here with live progress and cancellation.</p></div>}</aside>}
     {rightDrawer === "details" && <aside className="right-drawer details-drawer" style={{ width: rightDrawerWidth }}><div className="drawer-resizer left" role="separator" aria-label="Resize Details panel" onPointerDown={(event) => beginDrawerResize("right", event)} /><div className="drawer-head"><div><div className="eyebrow">SONG DETAILS</div><h2>{selectedSong?.title ?? "No song selected"}</h2></div><button onClick={() => setRightDrawer(null)}>✕</button></div>{selectedSong ? <><p className="details-summary">{selectedSong.description}</p><section className="card kv"><span>artist</span><b>{selectedSong.artist || "Not set"}</b><span>album</span><b>{selectedSong.album || "Not set"}</b><span>genre</span><b>{selectedSong.genre || "Not set"}</b><span>year / track</span><b>{[selectedSong.year, selectedSong.track_number].filter(Boolean).join(" / ") || "Not set"}</b><span>type</span><b>{selectedSong.instrumental ? "Instrumental" : "Vocal"}</b><span>seed</span><b>{selectedSong.seed}</b><span>lyrics</span><b>{selectedSong.timed_lyrics?.lines?.length ? `${selectedSong.timed_lyrics.lines.length} timed lines` : "not synchronized"}</b><span>created</span><b>{selectedSong.created_at}</b></section>{selectedSong.lyrics && <section className="details-lyrics"><div className="eyebrow">LYRICS</div><pre>{selectedSong.lyrics}</pre></section>}{selectedSong.english_translation && <section className="details-lyrics"><div className="eyebrow">ENGLISH TRANSLATION</div><pre>{selectedSong.english_translation}</pre></section>}<div className="detail-actions"><button onClick={() => editSong(selectedSong)}>Edit details</button><button disabled={!status?.lyrics_sync.ready || selectedSong.instrumental} onClick={() => void startLyricsSync(selectedSong)}>{selectedSong.timed_lyrics?.lines?.length ? "Re-sync lyrics" : "Sync lyrics"}</button><button onClick={() => void openAudioEditor(selectedSong)}>Studio</button><button onClick={() => void openVideoStudio(selectedSong)}>Make video</button><button onClick={() => reuseSong(selectedSong)}>Reuse song</button><button onClick={() => downloadSong(selectedSong)}>Download WAV</button><button onClick={() => void openSongFolder(songFolderName(selectedSong))}>Open folder</button></div></> : <div className="drawer-empty"><span>♫</span><strong>Select a song</strong><p>Choose a library song to see its saved prompt, seed, lyrics, and actions.</p></div>}</aside>}
     {videoTool && <section className="tool-workspace video-tool-workspace" aria-label={`Video Studio for ${videoTool.song.title}`}><header className="tool-head"><div><div className="eyebrow">STUDIO TOOL</div><h2>Video Studio</h2><span>{videoTool.song.title} · local visualizer and MP4 renderer</span></div><button onClick={() => setVideoTool(null)}>Close</button></header><iframe title={`Video Studio — ${videoTool.song.title}`} src={videoTool.url} allow="autoplay" /></section>}
@@ -1083,6 +1197,24 @@ export default function App() {
         <div className="modal-actions"><button onClick={() => setPromptHelpOpen(false)}>Cancel</button><button className="primary" onClick={applyPromptHelp}>Use this description</button></div>
       </section>
     </div>}
+    {lyricAssist && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !lyricBusy) setLyricAssist(null); }}>
+      <section className="modal-card lyric-assist-modal" role="dialog" aria-modal="true" aria-labelledby="lyric-assist-title">
+        <div className="modal-head"><div><div className="eyebrow">WRITING</div><h2 id="lyric-assist-title">{lyricAssist.mode === "optimize" ? "Optimize lyrics" : "Input your idea for lyric generation"}</h2></div><button aria-label="Close" disabled={lyricBusy} onClick={() => setLyricAssist(null)}>✕</button></div>
+        {lyricAssist.mode === "generate" && !lyricPreview && <label>Explain the lyrics you’re looking for, or give me a theme or topic.<textarea rows={5} autoFocus value={lyricIdea} onChange={(event) => setLyricIdea(event.target.value)} placeholder="A midnight walk home, two people who will not say the real thing…" /></label>}
+        {lyricAssist.mode === "optimize" && !lyricPreview && <p className="modal-note">This rewrites the current lyrics with MiniMax Music 3 section tags. Meaning stays; repeats get tightened. Preview before Apply.</p>}
+        {lyricPreview && <label>Lyrics preview<textarea rows={14} value={lyricPreview} onChange={(event) => setLyricPreview(event.target.value)} /><small>{lyricPreviewTitle ? `Suggested title if yours is empty: ${lyricPreviewTitle}` : "Section tags only. Apply writes this into the lyrics box."}</small></label>}
+        {lyricPreviewDescription && <label>Music description found<textarea rows={8} value={lyricPreviewDescription} onChange={(event) => setLyricPreviewDescription(event.target.value)} /><small>Apply will move this into Music Description, not the lyrics.</small></label>}
+        {lyricError && <div className="error">{lyricError}</div>}
+        <p className="modal-note">{writingEnabled ? "This uses your enabled Writing key." : writingConfigured ? "The first generate turns Writing Enable on so this key can be used. Uncheck Enable in KEYS later to stop spending." : "Save a Writing key in KEYS first."}</p>
+        <div className="modal-actions">
+          <button disabled={lyricBusy} onClick={() => setLyricAssist(null)}>Cancel</button>
+          {!lyricPreview && lyricAssist.mode === "generate" && <button disabled={lyricBusy} onClick={() => void runLyricAssist(true)}>{lyricBusy ? "Writing…" : "Generate random lyrics"}</button>}
+          {!lyricPreview && <button className="primary" disabled={lyricBusy} onClick={() => void runLyricAssist(false)}>{lyricBusy ? "Writing…" : lyricAssist.mode === "optimize" ? "Optimize" : "Generate lyrics"}</button>}
+          {lyricPreview && <button disabled={lyricBusy} onClick={() => void runLyricAssist(lyricAssist.mode === "generate" && !lyricIdea.trim())}>Try again</button>}
+          {lyricPreview && <button className="primary" disabled={!lyricPreview.trim()} onClick={applyLyricAssist}>Apply to lyrics</button>}
+        </div>
+      </section>
+    </div>}
     {collectionDialog && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setCollectionDialog(null); }}><section className="modal-card collection-dialog" role="dialog" aria-modal="true" aria-labelledby="collection-dialog-title"><div className="modal-head"><div><div className="eyebrow">LIBRARY</div><h2 id="collection-dialog-title">New {collectionDialog}</h2></div><button onClick={() => setCollectionDialog(null)}>✕</button></div><label>{collectionDialog === "playlist" ? "Playlist" : "Workspace"} name<input autoFocus maxLength={80} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveCollection(); }} placeholder={collectionDialog === "playlist" ? "Road trip favorites" : "Album project"} /></label><p className="modal-note">{collectionDialog === "playlist" ? "A song can appear in as many playlists as you like." : "Moving a song here changes its primary workspace. Every song belongs to one workspace."}</p>{error && <div className="error">{error}</div>}<div className="modal-actions"><button onClick={() => setCollectionDialog(null)}>Cancel</button><button className="primary" disabled={libraryBusy || !collectionName.trim()} onClick={() => void saveCollection()}>{libraryBusy ? "Creating…" : `Create ${collectionDialog}`}</button></div></section></div>}
     {editingSong && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setEditingSong(null); }}>
       <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="edit-song-title">
@@ -1091,7 +1223,7 @@ export default function App() {
         <label>Song title<input autoFocus value={editTitle} maxLength={120} onChange={(event) => setEditTitle(event.target.value)} /></label>
         <div className="metadata-grid"><label>Artist<input value={editArtist} maxLength={160} onChange={(event) => setEditArtist(event.target.value)} placeholder="Artist or band name" /></label><label>Album<input value={editAlbum} maxLength={160} onChange={(event) => setEditAlbum(event.target.value)} placeholder="Album name" /></label><label>Genre<input value={editGenre} maxLength={120} onChange={(event) => setEditGenre(event.target.value)} placeholder="Genre" /></label><label>Year<input value={editYear} inputMode="numeric" maxLength={4} onChange={(event) => setEditYear(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="2026" /></label><label>Track number<input value={editTrackNumber} maxLength={7} onChange={(event) => setEditTrackNumber(event.target.value.replace(/[^\d/]/g, ""))} placeholder="1 or 1/12" /></label></div>
         <label>Music description<textarea rows={7} value={editDescription} onChange={(event) => setEditDescription(event.target.value)} /></label>
-        {!editingSong.instrumental && <><label>Lyrics language<select value={editLyricsLanguage} onChange={(event) => setEditLyricsLanguage(event.target.value)}>{LYRIC_LANGUAGES.map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select></label><label>Lyrics<textarea rows={10} value={editLyrics} onChange={(event) => setEditLyrics(event.target.value)} /></label><label>English translation (display only)<textarea rows={8} value={editTranslation} onChange={(event) => setEditTranslation(event.target.value)} placeholder="One translated line for each sung line" /><small>The translation appears beneath synchronized lyrics and is never sung.</small></label></>}
+        {!editingSong.instrumental && <><label>Lyrics language<select value={editLyricsLanguage} onChange={(event) => setEditLyricsLanguage(event.target.value)}>{LYRIC_LANGUAGES.map(([code, name]) => <option value={code} key={code}>{name}</option>)}</select></label><label>Lyrics<div className="lyrics-toolbar edit-lyrics-toolbar"><div className="lyric-ai-actions"><button type="button" className="lyric-ai-button" disabled={!editLyrics.replace(/\[[^\]]+\]/g, "").trim()} onClick={() => openLyricAssist("edit", "optimize")}>Optimize</button><button type="button" className="lyric-ai-button generate" onClick={() => openLyricAssist("edit", "generate")}>Generate Lyrics</button></div></div><textarea rows={10} value={editLyrics} onChange={(event) => setEditLyrics(event.target.value)} /></label><label>English translation (display only)<textarea rows={8} value={editTranslation} onChange={(event) => setEditTranslation(event.target.value)} placeholder="One translated line for each sung line" /><small>The translation appears beneath synchronized lyrics and is never sung.</small></label></>}
         <p className="modal-note">This updates the saved library details. If lyrics changed, run Re-sync lyrics so playback timing matches the new words.</p>
         <div className="modal-actions"><button onClick={() => setEditingSong(null)}>Cancel</button><button className="primary" disabled={libraryBusy || !editTitle.trim()} onClick={() => void saveSongDetails()}>{libraryBusy ? "Saving…" : "Save changes"}</button></div>
       </section>

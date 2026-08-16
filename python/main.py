@@ -11,6 +11,7 @@ import threading
 import time
 import atexit
 from pathlib import Path
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -28,6 +29,8 @@ import cover_art
 import lyrics_sync
 import generation_timing
 import stable_sfx
+import ai_vault
+import ai_assist
 
 install(LOGS_ROOT)
 log = logging.getLogger("music3.studio")
@@ -147,6 +150,32 @@ class SongUpdateRequest(BaseModel):
 
 class PlaylistCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class AiProviderUpdate(BaseModel):
+    key: str | None = Field(default=None, max_length=4000)
+    clear: bool = False
+
+
+class AiCapabilityUpdate(BaseModel):
+    enabled: bool | None = None
+    provider: str | None = Field(default=None, max_length=40)
+    model: str | None = Field(default=None, max_length=80)
+
+
+class AiKeysUpdate(BaseModel):
+    providers: dict[str, AiProviderUpdate] = Field(default_factory=dict)
+    capabilities: dict[str, AiCapabilityUpdate] = Field(default_factory=dict)
+
+
+class WritingAssistRequest(BaseModel):
+    action: str = Field(pattern="^(generate|optimize|title)$")
+    idea: str = Field(default="", max_length=4000)
+    random: bool = False
+    title: str = Field(default="", max_length=120)
+    description: str = Field(default="", max_length=12000)
+    lyrics: str = Field(default="", max_length=24000)
+    language: str = Field(default="en", max_length=12)
 
 
 class CoverArtRequest(BaseModel):
@@ -394,6 +423,20 @@ def slug(value: str) -> str:
     return result[:64] or "untitled-song"
 
 
+RESERVED_FILE_STEMS = {
+    "con", "prn", "aux", "nul",
+    "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+    "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+}
+
+
+def safe_title_stem(title: str) -> str:
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", (title or "").strip()).strip(" .")[:120] or "song"
+    if safe.casefold() in RESERVED_FILE_STEMS:
+        safe = f"{safe}-audio"
+    return safe
+
+
 def download_filename(song_dir: Path, suffix: str) -> str:
     title = "song"
     try:
@@ -401,8 +444,51 @@ def download_filename(song_dir: Path, suffix: str) -> str:
         title = str(metadata.get("title") or title)
     except (OSError, json.JSONDecodeError):
         pass
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", title).strip(" .")[:120] or "song"
-    return f"{safe}{suffix.lower()}"
+    return f"{safe_title_stem(title)}{suffix.lower()}"
+
+
+def song_audio_file(song_dir: Path, metadata: dict | None = None) -> Path:
+    name = "song.wav"
+    if metadata is None:
+        try:
+            metadata = json.loads((song_dir / "song.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+    if metadata:
+        name = str(metadata.get("audio") or "song.wav")
+    candidate = song_dir / Path(name).name
+    if candidate.is_file():
+        return candidate
+    fallback = song_dir / "song.wav"
+    return fallback if fallback.is_file() else candidate
+
+
+def align_audio_to_title(song_dir: Path, metadata: dict, title: str) -> Path:
+    """Keep the master WAV named after the song title. Falls back if the file is locked."""
+    current = song_audio_file(song_dir, metadata)
+    target = song_dir / f"{safe_title_stem(title)}.wav"
+    if not current.is_file():
+        metadata["audio"] = target.name
+        return target
+    if current.resolve() == target.resolve():
+        metadata["audio"] = current.name
+        return current
+    if target.exists():
+        stem = safe_title_stem(title)
+        index = 2
+        while True:
+            alt = song_dir / f"{stem}-{index}.wav"
+            if not alt.exists() or alt.resolve() == current.resolve():
+                target = alt
+                break
+            index += 1
+    try:
+        current.replace(target)
+        metadata["audio"] = target.name
+        return target
+    except OSError:
+        metadata["audio"] = current.name
+        return current
 
 
 def gpu_status() -> dict:
@@ -429,6 +515,7 @@ def generate(job: Job) -> dict:
         job.phase, job.progress = "Starting standalone Music 3 worker", 0.01; job.emit()
         engine_result = music3_engine.generate(job, request, output)
         if job.cancel.is_set(): raise RuntimeError("cancelled")
+        audio_name = align_audio_to_title(song_dir, {"audio": output.name}, request["title"]).name
         metadata = {
             "id": job.id, "title": request["title"], "description": request["description"],
             "artist": request.get("artist", ""), "album": request.get("album", ""),
@@ -441,7 +528,7 @@ def generate(job: Job) -> dict:
             "vocal_gender": request.get("vocal_gender", "auto"), "prompt_tokens": request.get("prompt_tokens"),
             "english_translation": request.get("english_translation", ""),
             "lyrics_language": request.get("lyrics_language", "en"),
-            "sample_rate": engine_result["sample_rate"], "audio": output.name,
+            "sample_rate": engine_result["sample_rate"], "audio": audio_name,
             "cover": None, "cover_error": None, "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         manifest.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -469,7 +556,7 @@ def generate(job: Job) -> dict:
                 cover_seconds,
             )
         manifest.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
-        return {**metadata, "folder": str(song_dir), "folder_name": song_dir.name, "audio_url": f"/api/library/{song_dir.name}/song.wav", "cover_url": f"/api/library/{song_dir.name}/cover.png" if metadata["cover"] else None}
+        return {**metadata, "folder": str(song_dir), "folder_name": song_dir.name, "audio_url": f"/api/library/{quote(song_dir.name, safe='')}/{quote(audio_name, safe='')}", "cover_url": f"/api/library/{quote(song_dir.name, safe='')}/cover.png" if metadata["cover"] else None}
     except Exception:
         if not manifest.is_file():
             shutil.rmtree(song_dir, ignore_errors=True)
@@ -482,14 +569,20 @@ def library() -> list[dict]:
     for manifest in LIBRARY_ROOT.glob("*/song.json"):
         try:
             item = json.loads(manifest.read_text(encoding="utf-8"))
-            audio = manifest.parent / str(item.get("audio") or "song.wav")
+            audio = align_audio_to_title(manifest.parent, item, str(item.get("title") or "song"))
+            if item.get("audio") != audio.name:
+                item["audio"] = audio.name
+                try:
+                    manifest.write_text(json.dumps(item, indent=2, ensure_ascii=False), encoding="utf-8")
+                except OSError:
+                    pass
             if audio.is_file():
                 items.append({
                     **item,
                     "folder": str(manifest.parent),
                     "folder_name": manifest.parent.name,
-                    "audio_url": f"/api/library/{manifest.parent.name}/{audio.name}",
-                    "cover_url": f"/api/library/{manifest.parent.name}/{item['cover']}?v={(manifest.parent / item['cover']).stat().st_mtime_ns}" if item.get("cover") and (manifest.parent / item["cover"]).is_file() else None,
+                    "audio_url": f"/api/library/{quote(manifest.parent.name, safe='')}/{quote(audio.name, safe='')}",
+                    "cover_url": f"/api/library/{quote(manifest.parent.name, safe='')}/{quote(item['cover'], safe='')}?v={(manifest.parent / item['cover']).stat().st_mtime_ns}" if item.get("cover") and (manifest.parent / item["cover"]).is_file() else None,
                     "timed_lyrics": lyrics_sync.load(manifest.parent),
                 })
         except (OSError, json.JSONDecodeError): pass
@@ -631,7 +724,40 @@ async def render_visualizer_video(request: Request, title: str = "visualizer"):
 @app.get("/api/status")
 def status():
     ffmpeg = ffmpeg_path()
-    return {"model": music3_engine.model_status(), "cover_art": cover_art.status(), "stems": stems_status(), "sound_effects": stable_sfx.status(), "lyrics_sync": lyrics_sync.status(), "exports": {"ready": bool(ffmpeg), "detail": "MP3 and FLAC export ready" if ffmpeg else "Run Setup to install the private FFmpeg exporter"}, "service": inference_status(), "gpu": gpu_status(), "jobs": [job.snapshot() for job in manager.list()[:30]]}
+    return {"model": music3_engine.model_status(), "cover_art": cover_art.status(), "stems": stems_status(), "sound_effects": stable_sfx.status(), "lyrics_sync": lyrics_sync.status(), "exports": {"ready": bool(ffmpeg), "detail": "MP3 and FLAC export ready" if ffmpeg else "Run Setup to install the private FFmpeg exporter"}, "service": inference_status(), "gpu": gpu_status(), "ai": ai_vault.status(), "jobs": [job.snapshot() for job in manager.list()[:30]]}
+
+
+@app.get("/api/settings/ai-keys")
+def get_ai_keys():
+    return ai_vault.public_view()
+
+
+@app.put("/api/settings/ai-keys")
+def put_ai_keys(request: AiKeysUpdate):
+    try:
+        return ai_vault.apply_update(request.model_dump())
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.post("/api/assist/writing")
+def assist_writing(request: WritingAssistRequest):
+    try:
+        return ai_assist.write(
+            request.action,
+            idea=request.idea,
+            random=request.random,
+            title=request.title,
+            description=request.description,
+            lyrics=request.lyrics,
+            language=request.language,
+        )
+    except PermissionError as error:
+        raise HTTPException(409, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(502, str(error)) from error
 
 @app.post("/api/models/refresh")
 def refresh_models(): return music3_engine.model_status()
@@ -818,6 +944,7 @@ def update_song(folder: str, request: SongUpdateRequest):
         lyrics_sync.result_path(target).write_text(json.dumps(timed, indent=2, ensure_ascii=False), encoding="utf-8")
     if not metadata["title"]:
         raise HTTPException(422, "Song title cannot be blank")
+    align_audio_to_title(target, metadata, metadata["title"])
     manifest.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info("Updated Music 3 song details: %s", target.name)
     return {"updated": True}
@@ -900,7 +1027,7 @@ async def upload_song_cover(folder: str, filename: str, request: Request):
 
 
 def export_audio(song_dir: Path, fmt: str) -> dict:
-    source = song_dir / "song.wav"
+    source = song_audio_file(song_dir)
     if not source.is_file(): raise RuntimeError("The source WAV file is missing")
     ffmpeg = ffmpeg_path()
     if not ffmpeg: raise RuntimeError("FFmpeg is not installed")
@@ -955,7 +1082,8 @@ def convert_audio(folder: str, fmt: str):
 
 
 def extract_stems(job: Job) -> dict:
-    song_dir = resolve_song_folder(job.params["folder"]); source = song_dir / "song.wav"; output_root = song_dir / "stems"
+    song_dir = resolve_song_folder(job.params["folder"]); source = song_audio_file(song_dir); output_root = song_dir / "stems"
+    if not source.is_file(): raise RuntimeError("The source WAV file is missing")
     command = [str(music3_engine.WORKER_PYTHON), str(Path(__file__).with_name("demucs_runner.py")), "-n", "htdemucs", "--repo", str(STEMS_ROOT), "-d", "cuda", "--segment", "7", "--overlap", "0.1", "--shifts", "1"]
     if job.params["mode"] == "2": command += ["--two-stems", "vocals"]
     command += ["-o", str(output_root), "--filename", "{stem}.{ext}", str(source)]
@@ -1374,14 +1502,16 @@ def _reveal_in_explorer(path: Path) -> Path:
 @app.post("/api/library/{folder}/open")
 def open_song_folder(folder: str):
     song_dir = resolve_song_folder(folder)
-    audio_name = "song.wav"
     try:
-        audio_name = str(json.loads((song_dir / "song.json").read_text(encoding="utf-8")).get("audio") or "song.wav")
+        metadata = json.loads((song_dir / "song.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        pass
-    if Path(audio_name).name != audio_name:
-        audio_name = "song.wav"
-    audio = song_dir / audio_name
+        metadata = {}
+    audio = align_audio_to_title(song_dir, metadata, str(metadata.get("title") or "song"))
+    if metadata.get("audio") == audio.name:
+        try:
+            (song_dir / "song.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
     opened = _reveal_in_explorer(audio if audio.is_file() else song_dir)
     return {"path": str(opened)}
 
@@ -1432,6 +1562,10 @@ def delete_song(folder: str):
 def library_file(folder: str, filename: str):
     song_dir = resolve_song_folder(folder)
     target = (song_dir / filename).resolve()
+    if (not target.is_file()) and filename == "song.wav":
+        alias = song_audio_file(song_dir)
+        if alias.is_file():
+            target = alias.resolve()
     if target.parent != song_dir.resolve() or not target.is_file(): raise HTTPException(404, "Audio not found")
     media = {".png": "image/png", ".mp3": "audio/mpeg", ".flac": "audio/flac"}.get(target.suffix.lower(), "audio/wav")
     attachment_name = download_filename(song_dir, target.suffix) if target.suffix.lower() in {".wav", ".mp3", ".flac"} else target.name
